@@ -1,0 +1,95 @@
+/* 全局样式：基础重置 + 通用工具类 */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', Arial, sans-serif;
+  font-size: 14px;
+  color: #303133;
+  background-color: #f5f7fa;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 页面容器：统一内容页的内边距 */
+.page-container {
+  padding: 16px;
+}
+
+/* 页面标题行（标题 + 右侧操作区） */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+
+  h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+  }
+}
+
+/* 统计卡片行 */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+/* 统计卡片 */
+.stat-card {
+  padding: 20px;
+
+  .stat-label {
+    color: #909399;
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+
+  .stat-value {
+    font-size: 26px;
+    font-weight: 600;
+    color: #303133;
+  }
+
+  .stat-unit {
+    font-size: 13px;
+    color: #909399;
+    margin-left: 4px;
+  }
+}
+
+/* 表格工具栏（筛选 + 操作按钮） */
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 分页容器：右对齐 */
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+/* 金额等宽显示 */
+.amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
