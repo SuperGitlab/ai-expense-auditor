@@ -200,3 +200,21 @@ export interface AIReviewResult {
   workflow_errors: string[]
   elapsed_seconds: number | null
 }
+
+// ========== 站内通知 ==========
+export type NotificationType = 'ai_review' | 'approval' | 'payment' | 'system'
+
+export interface NotificationItem {
+  id: number
+  user_id: number
+  title: string
+  content: string | null
+  type: NotificationType
+  is_read: boolean
+  created_at: string
+}
+
+// 后端通知列表 = paginate结构 + unread_count
+export interface NotificationPage extends PageResult<NotificationItem> {
+  unread_count: number
+}

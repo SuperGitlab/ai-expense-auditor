@@ -1,9 +1,18 @@
 <script setup lang="ts">
-// 主布局：左侧菜单（按角色显隐）+ 顶栏（用户信息/退出）+ 内容区
-import { computed } from 'vue'
+// 主布局：左侧菜单（按角色显隐）+ 顶栏（通知铃铛/用户信息/退出）+ 内容区
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
+import {
+  TYPE_LABELS,
+  TYPE_TAG_TYPES,
+  getNotifications,
+  getUnreadCount,
+  markAllRead,
+  markRead,
+} from '@/api/notification'
+import type { NotificationItem } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -44,6 +53,50 @@ async function handleLogout() {
 function handleCommand(command: string) {
   if (command === 'logout') handleLogout()
 }
+
+// ===== 站内通知 =====
+const unreadCount = ref(0)
+const notifications = ref<NotificationItem[]>([])
+let notifyTimer: ReturnType<typeof setInterval> | undefined
+
+async function loadUnread() {
+  try {
+    unreadCount.value = (await getUnreadCount()).count
+  } catch {
+    /* 轮询失败静默 */
+  }
+}
+
+async function loadNotifications() {
+  try {
+    notifications.value = (await getNotifications(1, 10)).items
+  } catch {
+    /* 静默 */
+  }
+}
+
+async function readOne(n: NotificationItem) {
+  if (n.is_read) return
+  await markRead(n.id)
+  n.is_read = true
+  unreadCount.value = Math.max(0, unreadCount.value - 1)
+}
+
+async function readAll() {
+  await markAllRead()
+  notifications.value.forEach((n) => (n.is_read = true))
+  unreadCount.value = 0
+}
+
+function formatNotifyTime(iso: string) {
+  return iso.replace('T', ' ').slice(0, 16)
+}
+
+onMounted(() => {
+  loadUnread()
+  notifyTimer = setInterval(loadUnread, 30000)
+})
+onUnmounted(() => notifyTimer && clearInterval(notifyTimer))
 </script>
 
 <template>
@@ -72,23 +125,58 @@ function handleCommand(command: string) {
       <!-- 顶栏 -->
       <el-header class="layout-header">
         <div class="header-title">{{ pageTitle }}</div>
-        <el-dropdown @command="handleCommand">
-          <span class="user-info">
-            <el-avatar :size="30" class="user-avatar">
-              {{ userStore.displayName.charAt(0) || '?' }}
-            </el-avatar>
-            <span class="user-name">{{ userStore.displayName }}</span>
-            <el-tag size="small" type="info" effect="plain">{{ userStore.roleLabel }}</el-tag>
-            <el-icon><ArrowDown /></el-icon>
-          </span>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="logout">
-                <el-icon><SwitchButton /></el-icon>退出登录
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        <div class="header-right">
+          <!-- 站内通知 -->
+          <el-dropdown class="notify-drop" @visible-change="(v: boolean) => v && loadNotifications()">
+            <span class="notify-bell">
+              <el-badge :value="unreadCount" :hidden="!unreadCount" :max="99">
+                <el-icon :size="18"><Bell /></el-icon>
+              </el-badge>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <div v-if="!notifications.length" class="notify-empty">暂无通知</div>
+                <div
+                  v-for="n in notifications"
+                  :key="n.id"
+                  class="notify-item"
+                  :class="{ unread: !n.is_read }"
+                  @click="readOne(n)"
+                >
+                  <div class="notify-title">
+                    <el-tag size="small" :type="TYPE_TAG_TYPES[n.type] || 'info'">
+                      {{ TYPE_LABELS[n.type] || n.type }}
+                    </el-tag>
+                    <span>{{ n.title }}</span>
+                  </div>
+                  <div class="notify-content">{{ n.content }}</div>
+                  <div class="notify-time">{{ formatNotifyTime(n.created_at) }}</div>
+                </div>
+                <div v-if="notifications.length" class="notify-footer" @click="readAll">
+                  全部已读
+                </div>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+
+          <el-dropdown @command="handleCommand">
+            <span class="user-info">
+              <el-avatar :size="30" class="user-avatar">
+                {{ userStore.displayName.charAt(0) || '?' }}
+              </el-avatar>
+              <span class="user-name">{{ userStore.displayName }}</span>
+              <el-tag size="small" type="info" effect="plain">{{ userStore.roleLabel }}</el-tag>
+              <el-icon><ArrowDown /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="logout">
+                  <el-icon><SwitchButton /></el-icon>退出登录
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
       </el-header>
 
       <!-- 内容区 -->
@@ -149,6 +237,76 @@ function handleCommand(command: string) {
       color: #fff;
     }
   }
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.notify-bell {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  outline: none;
+}
+
+.notify-drop :deep(.el-dropdown-menu) {
+  width: 320px;
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.notify-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: #909399;
+  font-size: 13px;
+}
+
+.notify-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f2f5;
+
+  &:hover {
+    background: #f5f7fa;
+  }
+
+  &.unread .notify-title span {
+    font-weight: 600;
+  }
+
+  .notify-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #303133;
+  }
+
+  .notify-content {
+    margin-top: 4px;
+    font-size: 12px;
+    color: #909399;
+    white-space: pre-line;
+  }
+
+  .notify-time {
+    margin-top: 2px;
+    font-size: 12px;
+    color: #c0c4cc;
+  }
+}
+
+.notify-footer {
+  padding: 10px 0;
+  text-align: center;
+  font-size: 13px;
+  color: #409eff;
+  cursor: pointer;
 }
 
 .layout-main {
