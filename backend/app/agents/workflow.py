@@ -26,6 +26,7 @@ from app.config import settings
 from app.models import (Approval, ApprovalAction, Expense, ExpenseStatus, Rule)
 from app.rag.knowledge_base import KnowledgeBaseManager
 from app.services.expense_service import build_snapshot
+from app.services.notification_service import notify_ai_review
 from app.tools.database_tool import find_duplicate_invoice
 from app.utils.helpers import utc_now
 
@@ -263,6 +264,12 @@ class ExpenseReviewWorkflow:
             ai_decision=action,
         ))
         db.commit()
+
+        # 4.5 通知申请人（站内信必有、邮件尽力而为；失败不影响审核结果）
+        try:
+            notify_ai_review(db, expense, action, decision.get("reason", ""))
+        except Exception as e:
+            logger.warning(f"AI审核通知失败（不影响主流程）: {e}")
 
         # 5. 知识库回填（失败不影响主流程）
         try:
