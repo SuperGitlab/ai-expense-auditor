@@ -21,6 +21,8 @@ TEST_DATABASE_URL = os.environ.get(
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 # API测试中关闭提交自动AI审核（避免真实LLM调用；工作流专项用例用llm标记单独跑）
 os.environ["AGENT_REVIEW_ON_SUBMIT"] = "False"
+# TestClient默认Host为testserver，不在可信主机列表会被TrustedHostMiddleware拦成400，测试前补入
+os.environ["ALLOWED_HOSTS"] = "localhost,127.0.0.1,testserver"
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402
@@ -62,6 +64,13 @@ def db_session(db_engine):
     # 按外键依赖倒序清表
     for table in reversed(Base.metadata.sorted_tables):
         session.execute(table.delete())
+    # MySQL的DELETE不重置自增计数：重置后种子数据id稳定从1开始（业务测试payload硬编码category_id）
+    for table in Base.metadata.sorted_tables:
+        if any(
+            c.autoincrement and c.type.python_type is int
+            for c in table.primary_key.columns
+        ):
+            session.execute(text(f"ALTER TABLE {table.name} AUTO_INCREMENT = 1"))
     session.commit()
     # 测试用基础类别（与业务测试payload中的category_id对应）
     session.add_all([
