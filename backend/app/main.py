@@ -123,7 +123,7 @@ async def health_check():
 
 # ---------- 路由挂载 ----------
 from app.api.endpoints import (agent, approvals, auth, categories, expenses,  # noqa: E402
-                               reports, rules, users)
+                               notifications, reports, rules, users)
 
 app.include_router(auth.router)
 app.include_router(users.router)
@@ -133,3 +133,4 @@ app.include_router(rules.router)
 app.include_router(agent.router)
 app.include_router(reports.router)
 app.include_router(categories.router)
+app.include_router(notifications.router)
