@@ -16,6 +16,8 @@ def send_notification(db: Session, user_id: int, title: str, content: str, ntype
     """
     发送通知：站内信落库（必有） + 邮件（尽力而为）
 
+    注意：内部会 commit 当前会话，请在业务事务提交后调用（避免部分提交调用方的未落库变更）。
+
     Returns:
         bool: 站内信是否落库成功（邮件结果不影响返回值）
     """
@@ -23,7 +25,7 @@ def send_notification(db: Session, user_id: int, title: str, content: str, ntype
         db.add(Notification(user_id=user_id, title=title, content=content, type=ntype))
         db.commit()
     except Exception as e:
-        logger.warning(f"站内信落库失败: {e}")
+        logger.exception(f"站内信落库失败: {e}")
         db.rollback()
         return False
 

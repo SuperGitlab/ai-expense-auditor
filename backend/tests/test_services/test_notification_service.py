@@ -2,8 +2,6 @@
 通知服务测试
 核心契约：站内信落库必有 + 邮件尽力而为（失败不影响主流程）
 """
-import pytest
-
 from app.models import Notification, User
 from app.services import notification_service
 from app.services.notification_service import (notify_ai_review,
@@ -84,6 +82,28 @@ def test_notify_ai_review_variants(db_session, monkeypatch):
     assert "驳回" in rows[1].title and "发票重复" in rows[1].content
     assert "人工审批" in rows[2].title
     assert all(expense.expense_no in r.content for r in rows)
+
+
+@requires_db
+def test_send_notification_fk_violation(db_session):
+    """落库失败分支:不存在的user_id触发FK约束→返回False,rollback后会话仍可用"""
+    ok = send_notification(db_session, 999999, "T", "C", "system")
+    assert ok is False
+    assert db_session.query(Notification).count() == 0
+    # rollback后同一会话可继续正常工作
+    user = _create_user(db_session, "ns_u5")
+    assert send_notification(db_session, user.id, "T2", "C2", "approval") is True
+
+
+@requires_db
+def test_send_notification_survives_notify_raising(db_session, monkeypatch):
+    """邮件函数抛异常也不影响落库结果(外层try/except兜底)"""
+    def _boom(email, title, content):
+        raise RuntimeError("smtp exploded")
+    monkeypatch.setattr(notification_service, "notify", _boom)
+    user = _create_user(db_session, "ns_u6")
+    assert send_notification(db_session, user.id, "T", "C", "approval") is True
+    assert db_session.query(Notification).filter(Notification.user_id == user.id).count() == 1
 
 
 @requires_db
