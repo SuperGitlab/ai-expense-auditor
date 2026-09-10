@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models import (Approval, ApprovalAction, Expense, ExpenseStatus,
                         User, UserRole)
 from app.schemas.approval import ApprovalDecisionRequest
+from app.services.notification_service import notify_human_decision
 from app.utils.helpers import utc_now
 
 logger = logging.getLogger(__name__)
@@ -87,5 +88,10 @@ def decide(db: Session, user: User, req: ApprovalDecisionRequest) -> Expense:
     ))
     db.commit()
     db.refresh(expense)
+    # 通知申请人（站内信必有、邮件尽力而为；任何失败不影响审批结果）
+    try:
+        notify_human_decision(db, expense, approved=req.action == "approve", reason=req.comment)
+    except Exception as e:
+        logger.warning(f"审批结果通知失败（不影响主流程）: {e}")
     logger.info(f"{user.username} {req.action} 报销单 {expense.expense_no}")
     return expense

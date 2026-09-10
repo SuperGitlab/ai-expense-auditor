@@ -60,3 +60,65 @@ def test_isolation_between_users(client, db_session):
     assert resp.status_code == 404
     resp = client.get("/api/notifications", headers=h1)
     assert resp.json()["total"] == 1
+
+
+# ===== 接线用例:审批/打款触发通知 =====
+EXPENSE_PAYLOAD = {
+    "title": "测试报销",
+    "expense_type": "meal",
+    "items": [
+        {
+            "category_id": 2,
+            "description": "工作餐",
+            "amount": "100.00",
+            "expense_date": "2026-09-01",
+            "invoice_no": "INV-NOTIF-001",
+        }
+    ],
+}
+
+
+def _create_submitted(client, username):
+    headers = register_and_login(client, username)
+    resp = client.post("/api/expenses", json=EXPENSE_PAYLOAD, headers=headers)
+    expense_id = resp.json()["id"]
+    resp = client.post(f"/api/expenses/{expense_id}/submit", headers=headers)
+    assert resp.status_code == 200
+    return expense_id, headers
+
+
+@requires_db
+def test_decide_notifies_applicant(client):
+    """财务审批通过后,申请人收到approval类型站内信"""
+    expense_id, owner_headers = _create_submitted(client, "na_d1")
+    finance_headers = register_and_login(client, "na_dfin", role="finance")
+    resp = client.post(
+        "/api/approvals/decide",
+        json={"expense_id": expense_id, "action": "approve", "comment": "通过"},
+        headers=finance_headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = client.get("/api/notifications", headers=owner_headers)
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["type"] == "approval"
+    assert "已通过" in body["items"][0]["title"]
+
+
+@requires_db
+def test_reject_and_pay_notify(client):
+    """驳回也通知;打款登记产生payment通知"""
+    expense_id, owner_headers = _create_submitted(client, "na_d2")
+    finance_headers = register_and_login(client, "na_dfin2", role="finance")
+    client.post(
+        "/api/approvals/decide",
+        json={"expense_id": expense_id, "action": "approve"},
+        headers=finance_headers,
+    )
+    resp = client.post(f"/api/expenses/{expense_id}/pay", headers=finance_headers)
+    assert resp.status_code == 200, resp.text
+
+    resp = client.get("/api/notifications", headers=owner_headers)
+    types = [i["type"] for i in resp.json()["items"]]
+    assert "approval" in types and "payment" in types

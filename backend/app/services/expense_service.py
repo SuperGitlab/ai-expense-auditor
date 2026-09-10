@@ -15,6 +15,7 @@ from app.models import (Approval, ApprovalAction, Category, Expense,
                         ExpenseItem, ExpenseStatus, ExpenseType, User,
                         UserRole)
 from app.schemas.expense import ExpenseCreate, ExpenseUpdate
+from app.services.notification_service import notify_payment
 from app.utils.helpers import generate_expense_no, utc_now
 
 logger = logging.getLogger(__name__)
@@ -253,6 +254,11 @@ def pay_expense(db: Session, expense_id: int, user: User) -> Expense:
     expense.paid_at = utc_now()
     db.commit()
     db.refresh(expense)
+    # 打款完成通知申请人（失败不影响登记结果）
+    try:
+        notify_payment(db, expense)
+    except Exception as e:
+        logger.warning(f"打款通知失败（不影响主流程）: {e}")
     logger.info(f"财务 {user.username} 打款登记 报销单 {expense.expense_no}")
     return expense
 
