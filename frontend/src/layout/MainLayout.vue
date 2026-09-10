@@ -37,6 +37,7 @@ const menus = computed<MenuItem[]>(() => {
     { path: '/expenses/all', title: '全部报销', icon: 'Files', roles: ['manager', 'finance', 'admin'] },
     { path: '/approvals', title: '审批中心', icon: 'Finished', roles: ['manager', 'finance', 'admin'] },
     { path: '/rules', title: '规则管理', icon: 'Setting', roles: ['admin'] },
+    { path: '/users', title: '用户管理', icon: 'User', roles: ['admin'] },
     { path: '/reports', title: '数据报表', icon: 'DataAnalysis', roles: ['finance', 'admin'] },
   ]
   return all.filter((m) => !m.roles || (role && m.roles.includes(role)))
