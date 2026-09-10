@@ -101,9 +101,9 @@ uv run pytest -m llm -v         # LLM 真实联调用例（需 GLM_API_KEY + 测
 |---|---|---|
 | 📎 发票文件上传 | ❌ 未实现 | 无上传接口；`invoice_url` 由前端手填字符串，`UPLOAD_DIR` 仅在启动时建目录。待做：文件上传端点 + 大小/格式校验（`MAX_FILE_SIZE`、`ALLOWED_EXTENSIONS` 配置已就绪）|
 | 🔍 真实 OCR | ⚠️ 占位实现 | [ocr_tool.py](backend/app/tools/ocr_tool.py) 仅支持 txt/md/csv 直读，图片/PDF 返回占位文本「需接入OCR服务」。待做：接入 OCR 服务（如智谱 GLM-OCR 或 PaddleOCR）|
-| 📧 审核结果通知 | ⚠️ 未接线 | [notification_tool.py](backend/app/tools/notification_tool.py) 的 SMTP 发送已写好，但工作流中无人调用（配置 SMTP 也收不到邮件）。待做：AI 审核/人工审批完成后通知申请人 |
-| 📤 报表导出 | ❌ 未实现 | finance 角色已声明 `export` 权限，但无 Excel/CSV 导出接口 |
-| 👥 用户管理页面 | ⚠️ 仅后端 | `/api/users` 接口齐全（改角色/启停账号），前端无对应管理页面 |
+| 📧 审核结果通知 | ✅ 已完成 | 站内信铃铛（30秒轮询）+ 邮件尽力而为；AI审核/人工审批/打款登记三个触发点 |
+| 📤 报表导出 | ✅ 已完成 | `GET /api/reports/export` 返回4-sheet xlsx（总览/趋势/分类/明细）；finance/admin |
+| 👥 用户管理页面 | ✅ 已完成 | `/users` admin页面：改角色/启停，禁止操作自己 |
 | 🔗 多级审批流 | ❌ 未设计 | 当前为单人终审（manager 或 finance 一次决策），无「经理 → 财务」多级审批链 |
 | 🐳 容器化部署 | ⚠️ 半成品 | docker-compose 仅含 PostgreSQL/Redis 辅助服务；backend/frontend 无 Dockerfile，无 nginx 反向代理配置 |
 | 🧪 测试覆盖 | ⚠️ 部分 | users / rules / categories / reports / agent 接口无用例；AI 工作流用例需 `-m llm` 真实调用大模型 |

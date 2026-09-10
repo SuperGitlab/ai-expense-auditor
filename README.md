@@ -101,9 +101,9 @@ Not yet implemented or half-done — contributions welcome:
 |---|---|---|
 | 📎 Invoice file upload | ❌ Missing | No upload endpoint; `invoice_url` is a manually entered string. Needed: upload endpoint + size/format validation (`MAX_FILE_SIZE`, `ALLOWED_EXTENSIONS` configs are ready) |
 | 🔍 Real OCR | ⚠️ Placeholder | [ocr_tool.py](backend/app/tools/ocr_tool.py) only reads txt/md/csv; images/PDFs return a placeholder. Needed: a real OCR service (e.g. GLM-OCR or PaddleOCR) |
-| 📧 Review notifications | ⚠️ Not wired | [notification_tool.py](backend/app/tools/notification_tool.py) has SMTP support but nothing calls it. Needed: notify the applicant after AI review / human approval |
-| 📤 Report export | ❌ Missing | The finance role declares the `export` permission, but no Excel/CSV export endpoint exists |
-| 👥 User management UI | ⚠️ Backend only | `/api/users` endpoints are complete (role changes, enable/disable); no frontend page yet |
+| 📧 Review notifications | ✅ Done | In-app bell notifications (30s polling) + best-effort email on AI review / human decision / payment |
+| 📤 Report export | ✅ Done | `GET /api/reports/export` returns a 4-sheet xlsx (summary / trends / by-category / details); finance/admin |
+| 👥 User management UI | ✅ Done | `/users` page for admin: role change + enable/disable, self-modification blocked |
 | 🔗 Multi-level approval | ❌ Not designed | Currently a single-step final decision (manager or finance); no manager → finance approval chain |
 | 🐳 Containerized deploy | ⚠️ Partial | docker-compose only has PostgreSQL/Redis helpers; no Dockerfile for backend/frontend, no nginx config |
 | 🧪 Test coverage | ⚠️ Partial | No test cases for users / rules / categories / reports / agent endpoints; workflow tests require `-m llm` |
