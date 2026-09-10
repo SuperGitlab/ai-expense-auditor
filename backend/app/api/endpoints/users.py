@@ -59,6 +59,8 @@ def update_role(
 ):
     """修改用户角色（admin）"""
     user = _get_user_or_404(db, user_id)
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能修改自己的角色")
     user.role = body.role
     db.commit()
     db.refresh(user)
@@ -74,6 +76,8 @@ def update_status(
 ):
     """启用/禁用用户（admin）"""
     user = _get_user_or_404(db, user_id)
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能修改自己的状态（避免误禁用自己）")
     user.is_active = body.is_active
     db.commit()
     db.refresh(user)
