@@ -124,3 +124,78 @@ def get_by_category(db: Session) -> dict:
         }
 
     return cache_get_or_set("report:by_category", build, ttl=60)
+
+
+def export_report(db: Session, months: int = 6) -> bytes:
+    """
+    导出报表Excel：总览/月度趋势/分类占比/报销明细 四个sheet
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    summary = get_summary(db)
+    trends = get_trends(db, months)
+    by_category = get_by_category(db)
+
+    wb = Workbook()
+    header_font = Font(bold=True)
+
+    def _style(ws):
+        for cell in ws[1]:
+            cell.font = header_font
+        ws.freeze_panes = "A2"
+
+    # Sheet1 总览
+    ws = wb.active
+    ws.title = "总览"
+    ws.append(["指标", "数值"])
+    ws.append(["报销单总数", summary["total"]])
+    ws.append(["累计报销金额", summary["total_amount"]])
+    ws.append(["平均风险分", summary["avg_risk_score"]])
+    ws.append(["本月新增", summary["month_count"]])
+    ws.append(["生成时间", summary["generated_at"]])
+    _style(ws)
+
+    # Sheet2 月度趋势
+    ws = wb.create_sheet("月度趋势")
+    ws.append(["月份", "单数", "金额"])
+    for m in trends["months"]:
+        ws.append([m["month"], m["count"], m["amount"]])
+    _style(ws)
+
+    # Sheet3 分类占比
+    ws = wb.create_sheet("分类占比")
+    ws.append(["类别", "金额", "笔数", "占比"])
+    for c in by_category["categories"]:
+        ws.append([c["name"], c["amount"], c["count"], c["ratio"]])
+    _style(ws)
+
+    # Sheet4 报销明细
+    ws = wb.create_sheet("报销明细")
+    ws.append(["报销单号", "申请人", "部门", "类型", "金额", "状态", "风险分", "提交时间", "通过时间"])
+    for e in db.query(Expense).order_by(Expense.created_at.desc()).all():
+        ws.append([
+            e.expense_no,
+            e.applicant_name,
+            e.applicant_department,
+            e.expense_type.value if e.expense_type else "",
+            float(e.total_amount),
+            e.status.value if e.status else "",
+            float(e.risk_score) if e.risk_score is not None else None,
+            e.submitted_at.strftime("%Y-%m-%d %H:%M") if e.submitted_at else None,
+            e.approved_at.strftime("%Y-%m-%d %H:%M") if e.approved_at else None,
+        ])
+    _style(ws)
+
+    # 列宽：按各列内容最大长度粗略自适应（CJK按2倍宽）
+    for sheet in wb.worksheets:
+        for col_idx, col in enumerate(sheet.columns, start=1):
+            width = max((len(str(c.value)) for c in col if c.value is not None), default=8)
+            sheet.column_dimensions[get_column_letter(col_idx)].width = min(width * 2 + 2, 60)
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
