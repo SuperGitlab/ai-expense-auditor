@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 数据报表（finance/admin）：总览卡片 + 状态分布 + 月度趋势(CSS柱图) + 分类占比
 import { computed, onMounted, ref } from 'vue'
-import { getByCategory, getSummary, getTrends } from '@/api/report'
+import { getByCategory, getSummary, getTrends, exportReport } from '@/api/report'
 import { STATUS_MAP, formatAmount } from '@/constants'
 import type { CategoryStat, ReportSummary, TrendMonth } from '@/types'
 
@@ -31,6 +31,17 @@ async function load() {
   }
 }
 
+const exporting = ref(false)
+
+async function handleExport() {
+  exporting.value = true
+  try {
+    await exportReport(6)
+  } finally {
+    exporting.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -38,6 +49,9 @@ onMounted(load)
   <div class="page-container" v-loading="loading">
     <div class="page-header">
       <h2>数据报表</h2>
+      <el-button type="success" :loading="exporting" @click="handleExport">
+        <el-icon><Download /></el-icon>&nbsp;导出 Excel
+      </el-button>
       <el-button @click="load"><el-icon><Refresh /></el-icon>&nbsp;刷新</el-button>
     </div>
 
