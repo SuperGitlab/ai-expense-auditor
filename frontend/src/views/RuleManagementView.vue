@@ -181,21 +181,21 @@ onMounted(load)
         <el-table-column prop="name" label="规则名称" min-width="150" show-overflow-tooltip />
         <el-table-column prop="code" label="代码" width="170" />
         <el-table-column label="类型" width="100">
-          <template #default="{ row }">{{ RULE_TYPE_MAP[row.rule_type] || row.rule_type }}</template>
+          <template #default="{ row }">{{ RULE_TYPE_MAP[row.rule_type as RuleType] || row.rule_type }}</template>
         </el-table-column>
         <el-table-column label="判定条件" min-width="200">
           <template #default="{ row }">
             <code class="rule-expr">
               {{ categoryName(row.category_id) }} · {{ row.field_name }}
-              {{ OPERATOR_MAP[row.operator] || row.operator }}
+              {{ OPERATOR_MAP[row.operator as RuleOperator] || row.operator }}
               {{ row.threshold ?? '-' }}
             </code>
           </template>
         </el-table-column>
         <el-table-column label="严重度" width="90">
           <template #default="{ row }">
-            <el-tag :type="SEVERITY_MAP[row.severity]?.type || 'info'" size="small">
-              {{ SEVERITY_MAP[row.severity]?.label || row.severity }}
+            <el-tag :type="SEVERITY_MAP[row.severity as RuleSeverity]?.type || 'info'" size="small">
+              {{ SEVERITY_MAP[row.severity as RuleSeverity]?.label || row.severity }}
             </el-tag>
           </template>
         </el-table-column>

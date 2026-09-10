@@ -82,7 +82,7 @@ function buildPayload() {
     items: form.items.map((it) => ({
       category_id: it.category_id!,
       description: it.description,
-      amount: it.amount,
+      amount: Number(it.amount),
       expense_date: it.expense_date,
       invoice_no: it.invoice_no || null,
       invoice_url: it.invoice_url || null,
