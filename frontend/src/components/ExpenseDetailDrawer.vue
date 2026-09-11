@@ -176,6 +176,22 @@ function formatTime(t: string | null | undefined): string {
               <el-tag v-else size="small" type="danger">无发票</el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="发票文件" width="110" align="center">
+            <template #default="{ row }">
+              <template v-if="row.invoice_url">
+                <el-image
+                  v-if="/\.(jpe?g|png)$/i.test(row.invoice_url)"
+                  :src="row.invoice_url"
+                  :preview-src-list="[row.invoice_url]"
+                  preview-teleported
+                  fit="cover"
+                  style="width: 44px; height: 44px; border-radius: 4px"
+                />
+                <a v-else :href="row.invoice_url" target="_blank" class="invoice-dl">下载查看</a>
+              </template>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
         </el-table>
 
         <!-- AI 审核结果 -->
@@ -280,6 +296,16 @@ function formatTime(t: string | null | undefined): string {
 <style scoped lang="scss">
 .section {
   margin-bottom: 16px;
+}
+
+.invoice-dl {
+  color: var(--el-color-primary);
+  font-size: 12px;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }
 
 .section-title {

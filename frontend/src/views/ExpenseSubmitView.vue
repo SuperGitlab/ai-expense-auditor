@@ -3,8 +3,9 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { FormInstance, FormRules } from 'element-plus'
+import type { FormInstance, FormRules, UploadRequestOptions } from 'element-plus'
 import { createExpense, getExpense, submitExpense, updateExpense } from '@/api/expense'
+import { uploadInvoice } from '@/api/upload'
 import { listCategories } from '@/api/category'
 import { EXPENSE_TYPE_MAP, formatAmount } from '@/constants'
 import type { Category, ExpenseType } from '@/types'
@@ -32,6 +33,7 @@ const form = reactive({
     expense_date: string
     invoice_no: string
     invoice_url: string
+    invoice_filename?: string
   }[],
 })
 
@@ -57,6 +59,21 @@ function addItem() {
 
 function removeItem(index: number) {
   form.items.splice(index, 1)
+}
+
+// 行内上传发票文件（el-upload自定义http-request）
+async function handleUpload(
+  row: { invoice_url?: string | null; invoice_filename?: string },
+  opts: UploadRequestOptions,
+) {
+  try {
+    const r = await uploadInvoice(opts.file)
+    row.invoice_url = r.url
+    row.invoice_filename = r.filename
+    ElMessage.success(`已上传 ${r.filename}`)
+  } catch {
+    /* 错误提示由request拦截器统一弹出 */
+  }
 }
 
 // 明细行校验（动态行用el-form行内校验太绕，提交前手动检查）
@@ -267,6 +284,27 @@ onMounted(async () => {
               <el-input v-model="row.invoice_no" placeholder="无发票可留空" />
             </template>
           </el-table-column>
+          <el-table-column label="发票文件" width="190">
+            <template #default="{ row }">
+              <el-upload
+                :show-file-list="false"
+                accept=".pdf,.jpg,.jpeg,.png,.docx"
+                :http-request="(opts: UploadRequestOptions) => handleUpload(row, opts)"
+              >
+                <el-button link type="primary" size="small">
+                  <el-icon><Upload /></el-icon>&nbsp;{{ row.invoice_url ? '重新上传' : '上传发票' }}
+                </el-button>
+              </el-upload>
+              <a
+                v-if="row.invoice_url"
+                :href="row.invoice_url"
+                target="_blank"
+                class="invoice-link"
+              >
+                <el-icon><Paperclip /></el-icon>&nbsp;{{ row.invoice_filename || '已上传' }}
+              </a>
+            </template>
+          </el-table-column>
           <el-table-column label="操作" width="70" align="center">
             <template #default="{ $index }">
               <el-button
@@ -313,6 +351,19 @@ onMounted(async () => {
 
 .tip-alert {
   margin-top: 12px;
+}
+
+.invoice-link {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--el-color-primary);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }
 
 .form-actions {
