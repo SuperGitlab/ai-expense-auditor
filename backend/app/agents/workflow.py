@@ -244,6 +244,13 @@ class ExpenseReviewWorkflow:
         expense.risk_score = risk_score
         expense.ai_review_result = json.dumps(review_result, ensure_ascii=False)
 
+        # 回写明细发票校验结果（OCR/直读校验全过=True；无发票文件的明细不动）
+        ocr_items = final_state.get("document", {}).get("ocr_items") or {}
+        for it in expense.items:
+            ocr = ocr_items.get(it.id)
+            if ocr is not None:
+                it.invoice_verified = ocr["verified"]
+
         if action == "auto_approve":
             expense.status = ExpenseStatus.APPROVED
             expense.approved_at = utc_now()

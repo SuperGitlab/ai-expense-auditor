@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.agents.base_agent import AgentResult, BaseAgent
-from app.tools.ocr_tool import read_invoice_text
+from app.tools import ocr_tool
 
 
 class DocumentCheck(BaseModel):
@@ -48,11 +48,18 @@ class DocumentAgent(BaseAgent):
         expense = snapshot["expense"]
         items = snapshot["items"]
 
-        # 1. 发票文本提取（不可用则空串，由LLM按缺失处理）
+        # 1. 发票结构化提取（txt/docx直读+校验；图片/PDF走OCR流水线）
+        #    经 ocr_tool 模块属性调用：测试通过 monkeypatch 注入假实现
         invoice_texts = {}
+        ocr_items = {}
         for it in items:
             if it.get("invoice_url"):
-                invoice_texts[f"明细#{it['id']}"] = read_invoice_text(it["invoice_url"])
+                r = ocr_tool.read_invoice_ocr(
+                    it["invoice_url"], declared_no=it.get("invoice_no")
+                )
+                if r is not None:
+                    invoice_texts[f"明细#{it['id']}"] = ocr_tool.format_ocr_result(r)
+                    ocr_items[it["id"]] = {"verified": r.ok, "anomalies": r.anomalies}
 
         # 2. 交给LLM做一致性判断
         prompt = (
@@ -91,6 +98,7 @@ class DocumentAgent(BaseAgent):
             "anomalies": result.anomalies,
             "summary": result.summary,
             "invoice_texts": invoice_texts,
+            "ocr_items": ocr_items,
         }
         if error:
             data["degraded"] = True
