@@ -13,6 +13,7 @@ wheels/
 .env
 .env.*
 !.env.example
+!.env.docker.example
 
 # Runtime data (运行时生成，勿上传)
 backend/data/

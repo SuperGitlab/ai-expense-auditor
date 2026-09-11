@@ -1,5 +1,6 @@
-# Docker编排：数据库 + 缓存 + 后端 + 前端
-# 阶段1先启用 db/redis；backend/frontend 服务在阶段8补全
+# Docker编排：数据库 + 缓存 + 后端 + 前端 + 一次性初始化
+# 首次：docker compose up -d --build
+# 带知识库初始化（需GLM key）：docker compose --profile knowledge up
 services:
   db:
     image: postgres:16-alpine
@@ -31,6 +32,92 @@ services:
       timeout: 3s
       retries: 10
 
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: expense_backend
+    environment:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg2://user:password@db:5432/expense_db}
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: production
+      DEBUG: "False"
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-env}
+      JWT_SECRET_KEY: ${SECRET_KEY:-change-me-in-env}
+      GLM_API_KEY: ${GLM_API_KEY:-}
+      GLM_API_BASE: ${GLM_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
+      MODEL_NAME: ${MODEL_NAME:-glm-5.1}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
+      OCR_PROVIDER: ${OCR_PROVIDER:-hybrid}
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/app/backend/uploads
+      - appdata:/app/backend/data
+      - applogs:/app/backend/logs
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: expense_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # 一次性建表+种子账户（新库全量结构，无需migrate_v2）
+  init:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: expense_init
+    environment:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg2://user:password@db:5432/expense_db}
+      REDIS_URL: redis://redis:6379/0
+      GLM_API_KEY: ${GLM_API_KEY:-}
+    command: ["python", "scripts/init_db.py"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # 可选：知识库初始化（需GLM key）
+  knowledge-init:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: expense_knowledge_init
+    environment:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg2://user:password@db:5432/expense_db}
+      REDIS_URL: redis://redis:6379/0
+      GLM_API_KEY: ${GLM_API_KEY:-}
+      GLM_API_BASE: ${GLM_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
+      MODEL_NAME: ${MODEL_NAME:-glm-5.1}
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-embedding-3}
+    command: ["python", "scripts/init_knowledge.py"]
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["knowledge"]
+    restart: "no"
+
 volumes:
   pgdata:
   redisdata:
+  uploads:
+  appdata:
+  applogs:
