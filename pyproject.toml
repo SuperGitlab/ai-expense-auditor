@@ -16,9 +16,12 @@ dependencies = [
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
+    "pymupdf>=1.28.2",
     "pymysql>=1.2.0",
+    "python-docx>=1.2.0",
     "python-jose[cryptography]>=3.5.0",
     "python-multipart>=0.0.32",
+    "rapidocr-onnxruntime>=1.4.4",
     "redis>=8.1.0",
     "sqlalchemy>=2.0.52",
     "uvicorn>=0.52.4",
@@ -36,3 +39,7 @@ markers = [
     "llm: 真实调用GLM大模型的用例（默认跳过，uv run pytest -m llm 启用）",
 ]
 addopts = "-m 'not llm'"
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
