@@ -1,0 +1,16 @@
+.git
+.env
+.env.docker
+*.md
+docs/
+my_self/
+logs/
+frontend/
+# 后端运行数据不进镜像（挂卷）
+backend/uploads/
+backend/data/
+backend/logs/
+backend/.venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
