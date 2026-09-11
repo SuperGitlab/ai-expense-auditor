@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     TEMPERATURE: float = 0.3  # 审核场景需要稳定输出，温度不宜过高
     MAX_TOKENS: int = 2048  # 可配置最大token数
 
+    # OCR混合流水线配置
+    OCR_PROVIDER: str = "hybrid"  # hybrid=混合流水线; off=保持占位行为
+    VLM_MODEL_NAME: str = "glm-4.1v-flash"  # OCR的VLM兜底模型
+    OCR_MIN_CONFIDENCE: float = 0.85  # RapidOCR分支的路由阈值(平均置信度)
+
     # AI审核策略配置
     AGENT_REVIEW_ON_SUBMIT: bool = True  # 提交报销单时是否自动触发AI审核
     RISK_LOW_MAX: int = 40  # 风险分低于此值视为低风险（可自动通过）
@@ -62,7 +67,7 @@ class Settings(BaseSettings):
     # 文件存储配置
     UPLOAD_DIR: str = "./uploads"
     MAX_FILE_SIZE: int = 10485760  # 10MB
-    ALLOWED_EXTENSIONS: Annotated[list[str], NoDecode] = [".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"]
+    ALLOWED_EXTENSIONS: Annotated[list[str], NoDecode] = [".pdf", ".jpg", ".jpeg", ".png", ".docx"]
 
     # JWT配置
     JWT_SECRET_KEY: str
