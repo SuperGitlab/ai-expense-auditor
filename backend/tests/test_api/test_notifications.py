@@ -2,7 +2,7 @@
 通知接口测试
 列表/未读数/标记已读/全部已读 + 数据隔离(只能看自己的)
 """
-from app.models import Notification, User
+from app.models import Expense, ExpenseStatus, Notification, User
 from app.services.notification_service import send_notification
 
 from tests.conftest import register_and_login, requires_db
@@ -78,19 +78,23 @@ EXPENSE_PAYLOAD = {
 }
 
 
-def _create_submitted(client, username):
+def _create_submitted(client, db_session, username):
+    """创建报销单并直改到MANAGER_APPROVED（跳过初审，测通知接线不关心链路前半）"""
     headers = register_and_login(client, username)
     resp = client.post("/api/expenses", json=EXPENSE_PAYLOAD, headers=headers)
     expense_id = resp.json()["id"]
     resp = client.post(f"/api/expenses/{expense_id}/submit", headers=headers)
     assert resp.status_code == 200
+    expense = db_session.get(Expense, expense_id)
+    expense.status = ExpenseStatus.MANAGER_APPROVED
+    db_session.commit()
     return expense_id, headers
 
 
 @requires_db
-def test_decide_notifies_applicant(client):
-    """财务审批通过后,申请人收到approval类型站内信"""
-    expense_id, owner_headers = _create_submitted(client, "na_d1")
+def test_decide_notifies_applicant(client, db_session):
+    """财务终审通过后,申请人收到approval类型站内信"""
+    expense_id, owner_headers = _create_submitted(client, db_session, "na_d1")
     finance_headers = register_and_login(client, "na_dfin", role="finance")
     resp = client.post(
         "/api/approvals/decide",
@@ -107,9 +111,9 @@ def test_decide_notifies_applicant(client):
 
 
 @requires_db
-def test_reject_and_pay_notify(client):
+def test_reject_and_pay_notify(client, db_session):
     """驳回也通知;打款登记产生payment通知"""
-    expense_id, owner_headers = _create_submitted(client, "na_d2")
+    expense_id, owner_headers = _create_submitted(client, db_session, "na_d2")
     finance_headers = register_and_login(client, "na_dfin2", role="finance")
     client.post(
         "/api/approvals/decide",

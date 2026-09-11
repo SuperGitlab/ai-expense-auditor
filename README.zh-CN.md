@@ -104,6 +104,6 @@ uv run pytest -m llm -v         # LLM 真实联调用例（需 GLM_API_KEY + 测
 | 📧 审核结果通知 | ✅ 已完成 | 站内信铃铛（30秒轮询）+ 邮件尽力而为；AI审核/人工审批/打款登记三个触发点 |
 | 📤 报表导出 | ✅ 已完成 | `GET /api/reports/export` 返回4-sheet xlsx（总览/趋势/分类/明细）；finance/admin |
 | 👥 用户管理页面 | ✅ 已完成 | `/users` admin页面：改角色/启停，禁止操作自己 |
-| 🔗 多级审批流 | ❌ 未设计 | 当前为单人终审（manager 或 finance 一次决策），无「经理 → 财务」多级审批链 |
+| 🔗 多级审批流 | ✅ 已完成 | 固定两级链：经理初审（本部门）→ 财务终审；新增 `manager_approved` 状态、`approvals.step` 层级留痕、审批中心分待初审/待终审、admin 越级直批兜底、无经理部门自动跳过初审 |
 | 🐳 容器化部署 | ⚠️ 半成品 | docker-compose 仅含 PostgreSQL/Redis 辅助服务；backend/frontend 无 Dockerfile，无 nginx 反向代理配置 |
 | 🧪 测试覆盖 | ⚠️ 部分 | users / rules / categories / reports / agent 接口无用例；AI 工作流用例需 `-m llm` 真实调用大模型 |
