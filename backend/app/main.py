@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 
@@ -123,7 +124,7 @@ async def health_check():
 
 # ---------- 路由挂载 ----------
 from app.api.endpoints import (agent, approvals, auth, categories, expenses,  # noqa: E402
-                               notifications, reports, rules, users)
+                               notifications, reports, rules, uploads, users)
 
 app.include_router(auth.router)
 app.include_router(users.router)
@@ -134,3 +135,9 @@ app.include_router(agent.router)
 app.include_router(reports.router)
 app.include_router(categories.router)
 app.include_router(notifications.router)
+app.include_router(uploads.router)
+
+# 上传文件静态服务（无鉴权：路径含uuid不可猜测，演示项目可接受）
+# mount构造即校验目录存在，须先mkdir；lifespan里的mkdir保留，二者幂等
+Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
