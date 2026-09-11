@@ -7,6 +7,7 @@ export const STATUS_MAP: Record<string, { label: string; type: 'info' | 'primary
   draft: { label: '草稿', type: 'info' },
   submitted: { label: '已提交', type: 'primary' },
   pending: { label: '待审批', type: 'warning' },
+  manager_approved: { label: '待财务终审', type: 'primary' },
   approved: { label: '已通过', type: 'success' },
   rejected: { label: '已驳回', type: 'danger' },
   paid: { label: '已支付', type: 'success' },

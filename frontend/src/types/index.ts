@@ -38,6 +38,7 @@ export type ExpenseStatus =
   | 'draft'
   | 'submitted'
   | 'pending'
+  | 'manager_approved'
   | 'approved'
   | 'rejected'
   | 'paid'
@@ -110,11 +111,13 @@ export interface ApprovalRecord {
   risk_level: string | null
   risk_score: number | null
   ai_decision: string | null
+  step: 'manager' | 'finance' | null
   created_at: string
 }
 
 export interface PendingExpense {
   id: number
+  status: ExpenseStatus
   expense_no: string
   title: string
   user_id: number

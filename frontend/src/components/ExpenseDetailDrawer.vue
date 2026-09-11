@@ -113,13 +113,19 @@ watch(
   },
 )
 
-function actionLabel(action: string): string {
-  const map: Record<string, string> = {
-    submit: '提交报销',
-    ai_review: 'AI 审核',
-    approve: '审批通过',
-    reject: '审批驳回',
+// 审批动作中文标签（人工审批按step区分初审/终审）
+function actionLabel(action: string, step?: 'manager' | 'finance' | null): string {
+  if (action === 'approve') {
+    if (step === 'manager') return '初审通过（经理）'
+    if (step === 'finance') return '终审通过（财务）'
+    return '审批通过'
   }
+  if (action === 'reject') {
+    if (step === 'manager') return '初审驳回（经理）'
+    if (step === 'finance') return '终审驳回（财务）'
+    return '审批驳回'
+  }
+  const map: Record<string, string> = { submit: '提交报销', ai_review: 'AI 审核' }
   return map[action] || action
 }
 
@@ -269,7 +275,7 @@ function formatTime(t: string | null | undefined): string {
               <div class="timeline-title">
                 <el-icon v-if="record.action === 'ai_review'" color="#409eff"><MagicStick /></el-icon>
                 <span>{{ record.approver_name }}</span>
-                <span class="timeline-action">{{ actionLabel(record.action) }}</span>
+                <span class="timeline-action">{{ actionLabel(record.action, record.step) }}</span>
                 <el-tag
                   v-if="record.action === 'ai_review' && record.ai_decision"
                   size="small"

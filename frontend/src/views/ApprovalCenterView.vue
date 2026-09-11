@@ -1,14 +1,25 @@
 <script setup lang="ts">
-// 审批中心：待审列表（AI转人工的单据）+ 通过/驳回对话框 + 详情抽屉
-import { onMounted, reactive, ref } from 'vue'
+// 审批中心：两级队列（待经理初审/待财务终审）+ 通过/驳回对话框 + 详情抽屉
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import ExpenseDetailDrawer from '@/components/ExpenseDetailDrawer.vue'
 import { decideApproval, listPending } from '@/api/approval'
 import { RISK_MAP, formatAmount } from '@/constants'
+import { useUserStore } from '@/stores/user'
 import type { PendingExpense } from '@/types'
 
 const loading = ref(false)
 const items = ref<PendingExpense[]>([])
+
+// 角色显隐：初审按钮 manager/admin；终审按钮 finance/admin
+const userStore = useUserStore()
+const role = computed(() => userStore.role)
+const canDecide = (status: string) =>
+  status === 'pending'
+    ? ['manager', 'admin'].includes(role.value)
+    : ['finance', 'admin'].includes(role.value)
+const pendingItems = computed(() => items.value.filter((i) => i.status === 'pending'))
+const finalItems = computed(() => items.value.filter((i) => i.status === 'manager_approved'))
 
 // 详情抽屉
 const drawerVisible = ref(false)
@@ -89,46 +100,96 @@ onMounted(load)
         :closable="false"
         show-icon
         class="mb-12"
-        title="此处为 AI 审核后转人工处理的报销单（中高风险 / 大额 / 触发复核规则的低置信单据）。点击「详情」可查看 AI 风险评分与审核说明。"
+        title="两级审批：经理初审（本部门）→ 财务终审。此处为 AI 审核后转人工处理的单据；无经理的部门已自动跳过初审。点击「详情」可查看 AI 风险评分与审核说明。"
       />
 
-      <el-table v-loading="loading" :data="items" stripe>
-        <el-table-column prop="expense_no" label="单号" width="215" />
-        <el-table-column prop="title" label="标题" min-width="150" show-overflow-tooltip />
-        <el-table-column label="申请人" width="110">
-          <template #default="{ row }">{{ row.applicant_name || `用户${row.user_id}` }}</template>
-        </el-table-column>
-        <el-table-column label="金额" width="110" align="right">
-          <template #default="{ row }">
-            <span class="amount">¥{{ formatAmount(row.total_amount) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="AI 风险" width="110">
-          <template #default="{ row }">
-            <el-tag
-              v-if="row.risk_level"
-              :type="RISK_MAP[row.risk_level]?.type || 'info'"
-              size="small"
-            >
-              {{ RISK_MAP[row.risk_level]?.label || row.risk_level }} {{ row.risk_score }}
-            </el-tag>
-            <span v-else style="color: #c0c4cc">未审核</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="提交时间" width="165">
-          <template #default="{ row }">{{ formatTime(row.submitted_at) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-            <el-button link type="success" @click="openDecide(row, 'approve')">通过</el-button>
-            <el-button link type="danger" @click="openDecide(row, 'reject')">驳回</el-button>
-          </template>
-        </el-table-column>
-        <template #empty>
-          <el-empty description="暂无待审批单据" :image-size="80" />
-        </template>
-      </el-table>
+      <el-tabs model-value="first">
+        <el-tab-pane :label="`待经理初审（${pendingItems.length}）`" name="first">
+          <el-table v-loading="loading" :data="pendingItems" stripe>
+            <el-table-column prop="expense_no" label="单号" width="215" />
+            <el-table-column prop="title" label="标题" min-width="150" show-overflow-tooltip />
+            <el-table-column label="申请人" width="110">
+              <template #default="{ row }">{{ row.applicant_name || `用户${row.user_id}` }}</template>
+            </el-table-column>
+            <el-table-column label="金额" width="110" align="right">
+              <template #default="{ row }">
+                <span class="amount">¥{{ formatAmount(row.total_amount) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="AI 风险" width="110">
+              <template #default="{ row }">
+                <el-tag
+                  v-if="row.risk_level"
+                  :type="RISK_MAP[row.risk_level]?.type || 'info'"
+                  size="small"
+                >
+                  {{ RISK_MAP[row.risk_level]?.label || row.risk_level }} {{ row.risk_score }}
+                </el-tag>
+                <span v-else style="color: #c0c4cc">未审核</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="提交时间" width="165">
+              <template #default="{ row }">{{ formatTime(row.submitted_at) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="200" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+                <template v-if="canDecide('pending')">
+                  <el-button link type="success" @click="openDecide(row, 'approve')">通过</el-button>
+                  <el-button link type="danger" @click="openDecide(row, 'reject')">驳回</el-button>
+                </template>
+                <span v-else class="wait-hint">等待经理初审</span>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty description="暂无待初审单据" :image-size="80" />
+            </template>
+          </el-table>
+        </el-tab-pane>
+
+        <el-tab-pane :label="`待财务终审（${finalItems.length}）`" name="final">
+          <el-table v-loading="loading" :data="finalItems" stripe>
+            <el-table-column prop="expense_no" label="单号" width="215" />
+            <el-table-column prop="title" label="标题" min-width="150" show-overflow-tooltip />
+            <el-table-column label="申请人" width="110">
+              <template #default="{ row }">{{ row.applicant_name || `用户${row.user_id}` }}</template>
+            </el-table-column>
+            <el-table-column label="金额" width="110" align="right">
+              <template #default="{ row }">
+                <span class="amount">¥{{ formatAmount(row.total_amount) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="AI 风险" width="110">
+              <template #default="{ row }">
+                <el-tag
+                  v-if="row.risk_level"
+                  :type="RISK_MAP[row.risk_level]?.type || 'info'"
+                  size="small"
+                >
+                  {{ RISK_MAP[row.risk_level]?.label || row.risk_level }} {{ row.risk_score }}
+                </el-tag>
+                <span v-else style="color: #c0c4cc">未审核</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="提交时间" width="165">
+              <template #default="{ row }">{{ formatTime(row.submitted_at) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="200" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+                <template v-if="canDecide('manager_approved')">
+                  <el-button link type="success" @click="openDecide(row, 'approve')">通过</el-button>
+                  <el-button link type="danger" @click="openDecide(row, 'reject')">驳回</el-button>
+                </template>
+                <span v-else class="wait-hint">等待财务终审</span>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty description="暂无待终审单据" :image-size="80" />
+            </template>
+          </el-table>
+        </el-tab-pane>
+      </el-tabs>
     </el-card>
 
     <!-- 审批对话框 -->
@@ -174,5 +235,10 @@ onMounted(load)
   justify-content: space-between;
   margin-bottom: 12px;
   color: #606266;
+}
+
+.wait-hint {
+  color: #c0c4cc;
+  font-size: 12px;
 }
 </style>
