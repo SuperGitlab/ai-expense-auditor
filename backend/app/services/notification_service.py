@@ -50,13 +50,18 @@ def notify_ai_review(db: Session, expense: Expense, action: str, reason: str) ->
     send_notification(db, expense.user_id, title, content, "ai_review")
 
 
-def notify_human_decision(db: Session, expense: Expense, approved: bool, reason: str | None) -> None:
-    """人工审批结果通知申请人"""
+def notify_human_decision(db: Session, expense: Expense, approved: bool,
+                          reason: str | None, step: str | None = None) -> None:
+    """人工审批结果通知申请人（step区分初审/终审文案）"""
     no = expense.expense_no
     if approved:
-        title, content = "报销单已通过审批", f"您的报销单 {no} 已通过人工审批，等待财务打款。"
+        if step == "manager":
+            title, content = "报销单已通过经理初审", f"您的报销单 {no} 已通过经理初审，等待财务终审。"
+        else:
+            title, content = "报销单已通过财务终审", f"您的报销单 {no} 已完成全部审批，等待财务打款。"
     else:
-        title, content = "报销单被驳回", f"您的报销单 {no} 被审批人驳回。\n原因：{reason or '未填写'}"
+        stage = "经理初审" if step == "manager" else "财务终审"
+        title, content = "报销单被驳回", f"您的报销单 {no} 在{stage}环节被驳回。\n原因：{reason or '未填写'}"
     send_notification(db, expense.user_id, title, content, "approval")
 
 

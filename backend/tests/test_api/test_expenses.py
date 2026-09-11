@@ -124,3 +124,18 @@ def test_edit_only_draft(client):
         headers=headers,
     )
     assert resp.status_code == 400
+
+
+@requires_db
+def test_cancel_after_manager_approved_forbidden(client, db_session):
+    """MANAGER_APPROVED（已进财务队列）不可自行取消→400"""
+    from app.models import Expense, ExpenseStatus
+    headers = register_and_login(client, "cx_e1")
+    resp = client.post("/api/expenses", json=EXPENSE_PAYLOAD, headers=headers)
+    expense_id = resp.json()["id"]
+    client.post(f"/api/expenses/{expense_id}/submit", headers=headers)
+    expense = db_session.get(Expense, expense_id)
+    expense.status = ExpenseStatus.MANAGER_APPROVED
+    db_session.commit()
+    resp = client.post(f"/api/expenses/{expense_id}/cancel", headers=headers)
+    assert resp.status_code == 400

@@ -9,6 +9,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.approval import ApprovalAction
+from app.models.expense import ExpenseStatus
 
 
 class ApprovalResponse(BaseModel):
@@ -21,6 +22,7 @@ class ApprovalResponse(BaseModel):
     approver_name: str
     action: ApprovalAction
     comment: Optional[str] = None
+    step: Optional[str] = None  # 审批层级: manager/finance（人工审批记录）
     risk_level: Optional[str] = None
     risk_score: Optional[Decimal] = None
     ai_decision: Optional[str] = None
@@ -45,6 +47,7 @@ class PendingExpenseItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    status: ExpenseStatus
     expense_no: str
     title: str
     user_id: int

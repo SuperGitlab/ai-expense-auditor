@@ -19,18 +19,21 @@ logger = logging.getLogger(__name__)
 
 def list_pending(db: Session, user: User) -> List[Expense]:
     """
-    待审批列表（finance/manager）：
-    AI审核后转人工的报销单（PENDING状态）
+    待审批列表（两级链）：
+    manager 见 PENDING（本部门）；finance/admin 见 PENDING + MANAGER_APPROVED
     """
     if not user.has_permission("approve"):
         raise HTTPException(status_code=403, detail="无审批权限")
 
-    query = db.query(Expense).filter(Expense.status == ExpenseStatus.PENDING)
-    # manager 只审本部门；finance/admin 审全部
+    query = db.query(Expense).filter(
+        Expense.status.in_([ExpenseStatus.PENDING, ExpenseStatus.MANAGER_APPROVED])
+    )
+    # manager 只审本部门的初审队列；finance/admin 审全部两级队列
     if user.role == UserRole.MANAGER:
         from app.models.user import User as UserModel
         query = query.join(UserModel, Expense.user_id == UserModel.id).filter(
-            UserModel.department == user.department
+            UserModel.department == user.department,
+            Expense.status == ExpenseStatus.PENDING,
         )
     return query.order_by(Expense.submitted_at.asc()).all()
 
@@ -47,8 +50,10 @@ def get_history(db: Session, expense_id: int) -> List[Approval]:
 
 def decide(db: Session, user: User, req: ApprovalDecisionRequest) -> Expense:
     """
-    人工审批决策：
-    权限校验 → 状态机校验（SUBMITTED/PENDING可审）→ 更新报销单状态 → 写审批记录
+    两级审批决策（规则表）：
+    manager: PENDING(本部门) approve→MANAGER_APPROVED / reject→REJECTED
+    finance: MANAGER_APPROVED approve→APPROVED(写approved_at) / reject→REJECTED
+    admin:   PENDING/MANAGER_APPROVED 越级直批→APPROVED（留痕）/ reject→REJECTED
     """
     if not user.has_permission("approve"):
         raise HTTPException(status_code=403, detail="无审批权限")
@@ -57,11 +62,20 @@ def decide(db: Session, user: User, req: ApprovalDecisionRequest) -> Expense:
     if not expense:
         raise HTTPException(status_code=404, detail=f"报销单 {req.expense_id} 不存在")
 
-    if expense.status not in (ExpenseStatus.SUBMITTED, ExpenseStatus.PENDING):
-        raise HTTPException(
-            status_code=400,
-            detail=f"当前状态 {expense.status.value} 不可审批（仅待审核状态可操作）",
-        )
+    # 角色可操作状态表
+    if user.role == UserRole.MANAGER:
+        allowed = {ExpenseStatus.PENDING}
+    elif user.role == UserRole.FINANCE:
+        allowed = {ExpenseStatus.MANAGER_APPROVED}
+    else:  # admin：越级兜底，两级状态都可操作
+        allowed = {ExpenseStatus.PENDING, ExpenseStatus.MANAGER_APPROVED}
+
+    if expense.status not in allowed:
+        hint = {
+            UserRole.FINANCE: "财务终审需先经经理初审（当前状态 {s}）",
+            UserRole.MANAGER: "当前状态 {s} 不可初审（仅待经理初审的单可操作）",
+        }.get(user.role, "当前状态 {s} 不可审批")
+        raise HTTPException(status_code=400, detail=hint.format(s=expense.status.value))
 
     # manager 只能审本部门的单
     if user.role == UserRole.MANAGER:
@@ -69,12 +83,24 @@ def decide(db: Session, user: User, req: ApprovalDecisionRequest) -> Expense:
         if not owner or owner.department != user.department:
             raise HTTPException(status_code=403, detail="只能审批本部门的报销单")
 
+    comment = req.comment
     if req.action == "approve":
-        expense.status = ExpenseStatus.APPROVED
-        expense.approved_at = utc_now()
+        # step：初审(manager)停在 MANAGER_APPROVED；到达 APPROVED 记 finance（admin越级同样记finance）
+        is_first_review = (
+            user.role == UserRole.MANAGER and expense.status == ExpenseStatus.PENDING
+        )
+        step = "manager" if is_first_review else "finance"
+        if user.role == UserRole.ADMIN and expense.status == ExpenseStatus.PENDING:
+            comment = f"[管理员越级直批] {comment or ''}".strip()
+        expense.status = (
+            ExpenseStatus.MANAGER_APPROVED if is_first_review else ExpenseStatus.APPROVED
+        )
+        if expense.status == ExpenseStatus.APPROVED:
+            expense.approved_at = utc_now()
         expense.rejection_reason = None
         action = ApprovalAction.APPROVE
     else:
+        step = "manager" if expense.status == ExpenseStatus.PENDING else "finance"
         expense.status = ExpenseStatus.REJECTED
         expense.rejection_reason = req.comment or "审批驳回（未填写原因）"
         action = ApprovalAction.REJECT
@@ -84,14 +110,19 @@ def decide(db: Session, user: User, req: ApprovalDecisionRequest) -> Expense:
         approver_id=user.id,
         approver_name=user.full_name or user.username,
         action=action,
-        comment=req.comment,
+        comment=comment,
+        step=step,
     ))
     db.commit()
     db.refresh(expense)
     # 通知申请人（站内信必有、邮件尽力而为；任何失败不影响审批结果）
     try:
-        notify_human_decision(db, expense, approved=req.action == "approve", reason=req.comment)
+        notify_human_decision(
+            db, expense,
+            approved=req.action == "approve",
+            reason=req.comment, step=step,
+        )
     except Exception as e:
         logger.warning(f"审批结果通知失败（不影响主流程）: {e}")
-    logger.info(f"{user.username} {req.action} 报销单 {expense.expense_no}")
+    logger.info(f"{user.username} {req.action}({step}) 报销单 {expense.expense_no}")
     return expense

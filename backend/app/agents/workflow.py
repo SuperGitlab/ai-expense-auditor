@@ -23,7 +23,8 @@ from app.agents.rag_agent import RAGAgent
 from app.agents.risk_agent import RiskAgent
 from app.agents.rule_agent import RuleAgent
 from app.config import settings
-from app.models import (Approval, ApprovalAction, Expense, ExpenseStatus, Rule)
+from app.models import (Approval, ApprovalAction, Expense, ExpenseStatus, Rule,
+                        UserRole)
 from app.rag.knowledge_base import KnowledgeBaseManager
 from app.services.expense_service import build_snapshot
 from app.services.notification_service import notify_ai_review
@@ -169,6 +170,30 @@ def build_graph():
     return graph.compile()
 
 
+def _should_skip_manager_review(db: Session, expense: Expense) -> tuple[bool, str]:
+    """确定性跳过经理初审判定：申请人本人是经理（不能自审）/ 部门无在职经理"""
+    owner = expense.user
+    if owner is None:
+        return False, ""
+    if owner.role == UserRole.MANAGER:
+        return True, "申请人本人为经理，不能自审"
+    if owner.department:
+        from app.models import User
+        has_manager = (
+            db.query(User)
+            .filter(
+                User.role == UserRole.MANAGER,
+                User.is_active.is_(True),
+                User.department == owner.department,
+            )
+            .first()
+            is not None
+        )
+        if not has_manager:
+            return True, f"部门「{owner.department}」无在职经理"
+    return False, ""
+
+
 class ExpenseReviewWorkflow:
     """
     报销审核工作流：DB预加载 → LangGraph执行 → 结果落库 → 知识库回填
@@ -258,7 +283,20 @@ class ExpenseReviewWorkflow:
             expense.status = ExpenseStatus.REJECTED
             expense.rejection_reason = decision.get("reason", "AI审核驳回")
         else:
-            expense.status = ExpenseStatus.PENDING
+            # 转人工：按确定性规则决定是否跳过经理初审
+            skip, skip_reason = _should_skip_manager_review(db, expense)
+            if skip:
+                expense.status = ExpenseStatus.MANAGER_APPROVED
+                db.add(Approval(
+                    expense_id=expense_id,
+                    approver_id=None,
+                    approver_name="系统（自动跳过初审）",
+                    action=ApprovalAction.APPROVE,
+                    comment=f"自动跳过经理初审：{skip_reason}",
+                    step="manager",
+                ))
+            else:
+                expense.status = ExpenseStatus.PENDING
 
         db.add(Approval(
             expense_id=expense_id,
