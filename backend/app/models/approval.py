@@ -41,6 +41,8 @@ class Approval(Base):
     # 审批内容
     action = Column(Enum(ApprovalAction), nullable=False, comment="审批动作")
     comment = Column(Text, comment="审批意见/AI审核说明")
+    # 审批层级（仅人工 APPROVE/REJECT 时记录）：manager=初审 finance=终审
+    step = Column(String(20), comment="审批层级: manager/finance")
 
     # AI审核结果字段（仅 action=AI_REVIEW 时记录）
     risk_level = Column(String(20), comment="AI风险等级: low/medium/high")

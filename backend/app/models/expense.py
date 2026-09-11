@@ -15,6 +15,7 @@ class ExpenseStatus(str, enum.Enum):
     DRAFT = "draft"               # 草稿
     SUBMITTED = "submitted"       # 已提交
     PENDING = "pending"           # 审核中
+    MANAGER_APPROVED = "manager_approved"  # 经理已初审，待财务终审
     APPROVED = "approved"         # 已通过
     REJECTED = "rejected"         # 已拒绝
     PAID = "paid"                 # 已支付
