@@ -105,5 +105,5 @@ Not yet implemented or half-done — contributions welcome:
 | 📤 Report export | ✅ Done | `GET /api/reports/export` returns a 4-sheet xlsx (summary / trends / by-category / details); finance/admin |
 | 👥 User management UI | ✅ Done | `/users` page for admin: role change + enable/disable, self-modification blocked |
 | 🔗 Multi-level approval | ✅ Done | Fixed two-level chain: manager first review (own department) → finance final approval; new `manager_approved` status, `approvals.step` audit trail, approval center split into first/final queues, admin override, auto-skip when no manager in department |
-| 🐳 Containerized deploy | ⚠️ Partial | docker-compose only has PostgreSQL/Redis helpers; no Dockerfile for backend/frontend, no nginx config |
-| 🧪 Test coverage | ⚠️ Partial | No test cases for users / rules / categories / reports / agent endpoints; workflow tests require `-m llm` |
+| 🐳 Containerized deploy | ✅ Done | `docker compose up -d --build` starts the full stack (PostgreSQL/Redis/backend/nginx frontend + one-shot init & seed accounts); uploads/Chroma/logs persisted in volumes; optional `--profile knowledge` init; see `.env.docker.example` |
+| 🧪 Test coverage | ✅ Done | 110 pytest cases: auth / expenses / two-level approval chain / notifications / uploads / OCR pipeline / users / rules / categories / reports / agent endpoints; DB-gated tests auto-skip when unreachable |
