@@ -99,8 +99,8 @@ uv run pytest -m llm -v         # LLM 真实联调用例（需 GLM_API_KEY + 测
 
 | 事项 | 现状 | 待完成内容 |
 |---|---|---|
-| 📎 发票文件上传 | ❌ 未实现 | 无上传接口；`invoice_url` 由前端手填字符串，`UPLOAD_DIR` 仅在启动时建目录。待做：文件上传端点 + 大小/格式校验（`MAX_FILE_SIZE`、`ALLOWED_EXTENSIONS` 配置已就绪）|
-| 🔍 真实 OCR | ⚠️ 占位实现 | [ocr_tool.py](backend/app/tools/ocr_tool.py) 仅支持 txt/md/csv 直读，图片/PDF 返回占位文本「需接入OCR服务」。待做：接入 OCR 服务（如智谱 GLM-OCR 或 PaddleOCR）|
+| 📎 发票文件上传 | ✅ 已完成 | `POST /api/uploads`（pdf/jpg/jpeg/png/docx，≤10MB）→ 落盘 `/uploads/yyyy/mm/`，静态文件服务 |
+| 🔍 真实 OCR | ✅ 已完成 | 混合流水线：RapidOCR → 正则KIE（置信度≥0.85且关键字段齐全）或 GLM-VLM 兜底 → 确定性业务校验（税号18/20位、不含税+税额=价税合计±0.01）；txt/docx 直读 |
 | 📧 审核结果通知 | ✅ 已完成 | 站内信铃铛（30秒轮询）+ 邮件尽力而为；AI审核/人工审批/打款登记三个触发点 |
 | 📤 报表导出 | ✅ 已完成 | `GET /api/reports/export` 返回4-sheet xlsx（总览/趋势/分类/明细）；finance/admin |
 | 👥 用户管理页面 | ✅ 已完成 | `/users` admin页面：改角色/启停，禁止操作自己 |

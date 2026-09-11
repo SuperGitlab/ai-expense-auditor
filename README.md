@@ -99,8 +99,8 @@ Not yet implemented or half-done — contributions welcome:
 
 | Item | Status | TODO |
 |---|---|---|
-| 📎 Invoice file upload | ❌ Missing | No upload endpoint; `invoice_url` is a manually entered string. Needed: upload endpoint + size/format validation (`MAX_FILE_SIZE`, `ALLOWED_EXTENSIONS` configs are ready) |
-| 🔍 Real OCR | ⚠️ Placeholder | [ocr_tool.py](backend/app/tools/ocr_tool.py) only reads txt/md/csv; images/PDFs return a placeholder. Needed: a real OCR service (e.g. GLM-OCR or PaddleOCR) |
+| 📎 Invoice file upload | ✅ Done | `POST /api/uploads` (pdf/jpg/jpeg/png/docx, ≤10MB) → stored under `/uploads/yyyy/mm/`, served as static files |
+| 🔍 Real OCR | ✅ Done | Hybrid pipeline: RapidOCR → regex KIE (conf≥0.85 & key fields complete) or GLM-VLM fallback → deterministic validation (tax-ID 18/20 chars, excl+tax=total ±0.01); txt/docx read directly |
 | 📧 Review notifications | ✅ Done | In-app bell notifications (30s polling) + best-effort email on AI review / human decision / payment |
 | 📤 Report export | ✅ Done | `GET /api/reports/export` returns a 4-sheet xlsx (summary / trends / by-category / details); finance/admin |
 | 👥 User management UI | ✅ Done | `/users` page for admin: role change + enable/disable, self-modification blocked |
