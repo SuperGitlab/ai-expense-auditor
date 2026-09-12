@@ -40,7 +40,8 @@ def _dump(obj: Any) -> str:
 
 
 async def _run_with_log(agent: Any, input_data: dict) -> AgentResult:
-    """执行Agent并打印请求参数与返回结果（工作流观测）"""
+    """执行Agent并打印请求参数与返回结果（工作流观测）；星号线分隔每个Agent的日志块"""
+    logger.info("*" * 60)
     logger.info(f"Agent[{agent.name}] ▶ 请求参数:\n{_dump(input_data)}")
     result = await agent.run(input_data)
     logger.info(

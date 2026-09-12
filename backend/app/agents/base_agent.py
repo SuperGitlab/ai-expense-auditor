@@ -2,10 +2,12 @@
 Agent基类
 定义所有Agent的通用接口和行为
 """
+import json
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.utils.function_calling import convert_to_openai_function
 from pydantic import BaseModel
 
 from app.config import settings
@@ -78,6 +80,36 @@ class BaseAgent(ABC):
         # 工具列表
         self.tools: List[Any] = []
 
+        # 结构化输出的schema（_make_structured_llm时记录，供日志打印tools定义）
+        self.structured_schema: type[BaseModel] | None = None
+
+    def _make_structured_llm(self, schema: type[BaseModel]):
+        """构建结构化输出LLM并记录schema（GLM兼容接口不支持response_format，必须显式走tool-call模式）"""
+        self.structured_schema = schema
+        return self.llm.with_structured_output(schema, method="function_calling")
+
+    # 消息type → HTTP请求里的role（human/ai是LangChain内部叫法）
+    _ROLE_MAP = {"system": "system", "human": "user", "ai": "assistant", "tool": "tool"}
+
+    def _log_llm_request(self, method: str, messages: List[Any]) -> None:
+        """打印最终发给LLM的完整请求：模型参数 + messages prompt原文 + 结构化输出的tools定义"""
+        lines = [
+            f"Agent[{self.name}] ▶▶ 发给LLM的完整请求({method}) "
+            f"model={settings.MODEL_NAME} temperature={settings.TEMPERATURE} max_tokens={settings.MAX_TOKENS}"
+        ]
+        for i, m in enumerate(messages):
+            mtype = getattr(m, "type", "unknown")
+            role = self._ROLE_MAP.get(mtype, mtype)
+            lines.append(f"--- messages[{i}] role={role} ---")
+            lines.append(str(m.content))
+        if self.structured_schema is not None:
+            func = convert_to_openai_function(self.structured_schema)
+            lines.append("--- tools（结构化输出，强制函数调用）---")
+            lines.append(json.dumps([{"type": "function", "function": func}], ensure_ascii=False, indent=2))
+            lines.append("--- tool_choice ---")
+            lines.append(json.dumps({"type": "function", "function": {"name": func["name"]}}, ensure_ascii=False))
+        logger.info("\n".join(lines))
+
     @abstractmethod
     async def run(self, input_data: Dict[str, Any]) -> AgentResult:
         """
@@ -126,6 +158,7 @@ class BaseAgent(ABC):
 
         try:
             # 调用LLM
+            self._log_llm_request("chat", messages)
             response = await self.llm.ainvoke(messages)
             ai_message = response.content
 
@@ -153,6 +186,7 @@ class BaseAgent(ABC):
             SystemMessage(content=self.get_system_prompt()),
             HumanMessage(content=prompt),
         ]
+        self._log_llm_request("structured_chat", messages)
         return await self.structured_llm.ainvoke(messages)
 
     async def stateless_chat(self, prompt: str) -> str:
@@ -167,6 +201,7 @@ class BaseAgent(ABC):
             SystemMessage(content=self.get_system_prompt()),
             HumanMessage(content=prompt),
         ]
+        self._log_llm_request("stateless_chat", messages)
         resp = await self.llm.ainvoke(messages)
         return resp.content
 

@@ -23,10 +23,8 @@ class DocumentAgent(BaseAgent):
 
     def __init__(self):
         super().__init__(name="文档解析Agent")
-        # 结构化输出模型（GLM兼容接口不支持OpenAI的response_format，必须显式走tool-call模式）
-        self.structured_llm = self.llm.with_structured_output(
-            DocumentCheck, method="function_calling"
-        )
+        # 结构化输出模型（基类helper：构建tool-call模式LLM并记录schema供日志打印）
+        self.structured_llm = self._make_structured_llm(DocumentCheck)
 
     def get_system_prompt(self) -> str:
         return (

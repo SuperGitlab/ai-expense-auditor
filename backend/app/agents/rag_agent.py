@@ -26,11 +26,8 @@ class RAGAgent(BaseAgent):
     def __init__(self):
         super().__init__(name="RAG检索Agent")  # 初始化基类（LLM客户端、记忆等）
         self.retriever = ExpenseRetriever()  # 检索器：内含制度/案例两个向量库句柄
-        # GLM兼容接口不支持OpenAI的response_format，必须显式走tool-call模式
-        # （with_structured_output默认走json_mode，GLM下会报错/不生效）
-        self.structured_llm = self.llm.with_structured_output(
-            RAGSummary, method="function_calling"
-        )
+        # GLM兼容接口不支持response_format，走tool-call模式（基类helper同时记录schema供日志打印）
+        self.structured_llm = self._make_structured_llm(RAGSummary)
 
     def get_system_prompt(self) -> str:
         # 检索筛选的角色提示词：RAG初检是向量相似度，免不了混入不相关内容，

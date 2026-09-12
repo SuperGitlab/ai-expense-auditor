@@ -25,10 +25,8 @@ class RiskAgent(BaseAgent):
 
     def __init__(self):
         super().__init__(name="风险评估Agent")
-        # GLM兼容接口不支持OpenAI的response_format，必须显式走tool-call模式
-        self.structured_llm = self.llm.with_structured_output(
-            RiskAssessment, method="function_calling"
-        )
+        # GLM兼容接口不支持response_format，走tool-call模式（基类helper同时记录schema供日志打印）
+        self.structured_llm = self._make_structured_llm(RiskAssessment)
 
     def get_system_prompt(self) -> str:
         return (
