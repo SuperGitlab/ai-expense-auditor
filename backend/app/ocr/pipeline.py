@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
 
 
-def extract_invoice(path: str | Path, declared_no: str | None = None) -> OCRResult:
+def extract_invoice(path: str | Path, declared_no: str | None = None,
+                    declared_amount: str | float | None = None) -> OCRResult:
     """图片/PDF发票 → OCRResult（不抛异常）"""
     if settings.OCR_PROVIDER == "off":
         return OCRResult(anomalies=["OCR未启用(OCR_PROVIDER=off)"])
@@ -46,7 +47,7 @@ def extract_invoice(path: str | Path, declared_no: str | None = None) -> OCRResu
         else:
             return OCRResult(anomalies=["OCR与VLM均不可用"])
 
-    anomalies = validators.validate_invoice(fields, declared_no)
+    anomalies = validators.validate_invoice(fields, declared_no, declared_amount)
     return OCRResult(
         method=method,
         raw_text=text,

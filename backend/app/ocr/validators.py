@@ -58,11 +58,27 @@ def validate_date(fields: dict) -> list[str]:
     return [f"开票日期格式异常: {raw}"]
 
 
-def validate_invoice(fields: dict, declared_no: str | None = None) -> list[str]:
+def validate_declared_amount(fields: dict, declared_amount) -> list[str]:
+    """票面价税合计 vs 申报明细金额（±0.01容差）"""
+    total = str(fields.get("amount_total") or "").strip()
+    if not total or declared_amount in (None, ""):
+        return []  # 票面无金额/未申报金额：不在本层报缺失
+    try:
+        diff = float(total) - float(declared_amount)
+    except (TypeError, ValueError):
+        return [f"票面金额无法解析: {total}"]
+    if abs(diff) > 0.01:
+        return [f"票面价税合计 {total} 与申报金额 {declared_amount} 不符"]
+    return []
+
+
+def validate_invoice(fields: dict, declared_no: str | None = None,
+                     declared_amount: str | float | None = None) -> list[str]:
     """全部业务校验，返回异常描述列表（空=全过）"""
     return (
         validate_invoice_no(fields, declared_no)
         + validate_tax_ids(fields)
         + validate_amounts(fields)
         + validate_date(fields)
+        + validate_declared_amount(fields, declared_amount)
     )

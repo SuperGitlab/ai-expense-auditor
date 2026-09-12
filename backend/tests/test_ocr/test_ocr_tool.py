@@ -54,13 +54,24 @@ def test_bad_reconciliation_reports(tmp_path):
     assert "【校验异常】" in text and "勾稽不符" in text
 
 
+def test_declared_amount_mismatch_reports(tmp_path):
+    """票面价税合计 vs 申报金额硬校验：不符报异常、相符无异常"""
+    p = tmp_path / "inv.txt"
+    p.write_text(GOOD_TEXT, encoding="utf-8")  # 票面价税合计 100.00
+    bad = read_invoice_ocr(str(p), declared_amount="800")
+    assert any("申报金额" in a for a in bad.anomalies)
+    ok = read_invoice_ocr(str(p), declared_amount="100")
+    assert ok.anomalies == []
+
+
 def test_image_routes_pipeline(tmp_path, monkeypatch):
     from app.ocr import pipeline
     from app.ocr.types import OCRResult
     captured = {}
 
-    def _fake_extract(path, declared_no=None):
+    def _fake_extract(path, declared_no=None, declared_amount=None):
         captured["path"] = str(path)
+        captured["declared_amount"] = declared_amount
         return OCRResult(method="rapidocr", raw_text="票面文本",
                          confidence=0.9, fields={"invoice_no": "12345678"},
                          anomalies=["勾稽不符: 1+2 != 3"])
@@ -68,9 +79,10 @@ def test_image_routes_pipeline(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "extract_invoice", _fake_extract)
     p = tmp_path / "inv.png"
     p.write_bytes(PNG_1PX)
-    r = read_invoice_ocr(str(p))
+    r = read_invoice_ocr(str(p), declared_amount="100.00")
     assert r.method == "rapidocr"
     assert captured["path"] == str(p)
+    assert captured["declared_amount"] == "100.00"  # 申报金额穿参到流水线
     assert "勾稽不符" in read_invoice_text(str(p))
 
 
@@ -81,7 +93,7 @@ def test_uploads_url_maps_to_local(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "UPLOAD_DIR", str(tmp_path))
     monkeypatch.setattr(
         pipeline, "extract_invoice",
-        lambda p, declared_no=None: OCRResult(method="rapidocr", raw_text="ok"),
+        lambda p, declared_no=None, declared_amount=None: OCRResult(method="rapidocr", raw_text="ok"),
     )
     local = tmp_path / "2026" / "09"
     local.mkdir(parents=True)

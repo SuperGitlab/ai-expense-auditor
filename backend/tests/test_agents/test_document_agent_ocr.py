@@ -26,9 +26,11 @@ def test_collects_ocr_items(monkeypatch):
         raise RuntimeError("llm down")
     agent = DocumentAgent()
     monkeypatch.setattr(agent, "structured_chat", _raise)  # 走确定性兜底分支
+    captured = {}
 
-    def _fake_read(source, declared_no=None):
+    def _fake_read(source, declared_no=None, declared_amount=None):
         if source and "x.png" in source:
+            captured["declared_amount"] = declared_amount
             return OCRResult(method="rapidocr", raw_text="票面",
                              fields={"invoice_no": "123"},
                              anomalies=["勾稽不符: 1+2 != 3"])
@@ -38,7 +40,8 @@ def test_collects_ocr_items(monkeypatch):
 
     result = asyncio.run(agent.run({"expense": SNAPSHOT}))
     data = result.data
-    # 明细11：OCR有结果
+    # 明细11：OCR有结果，且申报金额(100.0)穿参到OCR调用
+    assert captured["declared_amount"] == 100.0
     assert data["ocr_items"][11] == {"verified": False, "anomalies": ["勾稽不符: 1+2 != 3"]}
     # 明细12：无invoice_url不提取
     assert 12 not in data["ocr_items"]

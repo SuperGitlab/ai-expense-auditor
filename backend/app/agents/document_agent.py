@@ -55,7 +55,8 @@ class DocumentAgent(BaseAgent):
         for it in items:
             if it.get("invoice_url"):
                 r = ocr_tool.read_invoice_ocr(
-                    it["invoice_url"], declared_no=it.get("invoice_no")
+                    it["invoice_url"], declared_no=it.get("invoice_no"),
+                    declared_amount=it.get("amount"),
                 )
                 if r is not None:
                     invoice_texts[f"明细#{it['id']}"] = ocr_tool.format_ocr_result(r)
