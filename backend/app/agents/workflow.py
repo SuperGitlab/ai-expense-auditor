@@ -34,6 +34,22 @@ from app.utils.helpers import utc_now
 logger = logging.getLogger(__name__)
 
 
+def _dump(obj: Any) -> str:
+    """Agent出入参统一序列化：中文原样、不可序列化对象转str"""
+    return json.dumps(obj, ensure_ascii=False, default=str, indent=2)
+
+
+async def _run_with_log(agent: Any, input_data: dict) -> AgentResult:
+    """执行Agent并打印请求参数与返回结果（工作流观测）"""
+    logger.info(f"Agent[{agent.name}] ▶ 请求参数:\n{_dump(input_data)}")
+    result = await agent.run(input_data)
+    logger.info(
+        f"Agent[{agent.name}] ◀ 返回结果:\n"
+        f"{_dump({'success': result.success, 'message': result.message, 'data': result.data})}"
+    )
+    return result
+
+
 # ===== 共享状态定义 =====
 class ExpenseReviewState(TypedDict, total=False):
     """审核工作流共享状态（节点返回局部更新）"""
@@ -64,7 +80,7 @@ knowledge_base = KnowledgeBaseManager()
 async def document_node(state: ExpenseReviewState) -> dict:
     """单据解析节点"""
     try:
-        result: AgentResult = await document_agent.run({"expense": state["expense"]})
+        result: AgentResult = await _run_with_log(document_agent, {"expense": state["expense"]})
         return {"document": result.data}
     except Exception as e:
         logger.exception("document节点失败")
@@ -77,7 +93,7 @@ async def document_node(state: ExpenseReviewState) -> dict:
 async def rule_node(state: ExpenseReviewState) -> dict:
     """规则校验节点（与rag并行）"""
     try:
-        result = await rule_agent.run({
+        result = await _run_with_log(rule_agent, {
             "expense": state["expense"],
             "rules_data": state.get("rules_data", {}),
         })
@@ -93,7 +109,7 @@ async def rule_node(state: ExpenseReviewState) -> dict:
 async def rag_node(state: ExpenseReviewState) -> dict:
     """RAG检索节点（与rule并行）"""
     try:
-        result = await rag_agent.run({"expense": state["expense"]})
+        result = await _run_with_log(rag_agent, {"expense": state["expense"]})
         return {"rag": result.data}
     except Exception as e:
         logger.exception("rag节点失败")
@@ -106,7 +122,7 @@ async def rag_node(state: ExpenseReviewState) -> dict:
 async def risk_node(state: ExpenseReviewState) -> dict:
     """风险评估节点（上游rule/rag全部完成后执行）"""
     try:
-        result = await risk_agent.run({
+        result = await _run_with_log(risk_agent, {
             "expense": state["expense"],
             "document": state.get("document", {}),
             "rules": state.get("rules", {}),
@@ -125,7 +141,7 @@ async def risk_node(state: ExpenseReviewState) -> dict:
 async def decision_node(state: ExpenseReviewState) -> dict:
     """决策节点（终审）"""
     try:
-        result = await decision_agent.run({
+        result = await _run_with_log(decision_agent, {
             "expense": state["expense"],
             "document": state.get("document", {}),
             "rules": state.get("rules", {}),
