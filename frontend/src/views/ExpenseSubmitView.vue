@@ -87,6 +87,26 @@ function applyOcrFields(row: ItemRow, f: OcrFields) {
   if (catId) row.category_id = catId
 }
 
+// 类别中文名 → 报销类型（category_id 匹配不到类别时的兜底；种子code本就与ExpenseType一致）
+const CAT_NAME_TO_TYPE: Record<string, ExpenseType> = {
+  差旅费: 'travel',
+  餐饮费: 'meal',
+  市内交通费: 'transportation',
+  住宿费: 'accommodation',
+  办公用品费: 'office',
+  其他费用: 'other',
+}
+
+// 应用识别结果到基本信息：标题←费用说明（退化用类别），类型←类别code；只覆盖非空识别值
+function applyOcrToForm(f: OcrFields) {
+  const title = f['费用说明'] || f['费用类别']
+  if (title) form.title = title.slice(0, 200) // 与输入框 maxlength 一致
+  const cat =
+    f.category_id != null ? categories.value.find((c) => c.id === f.category_id) : undefined
+  const typeCode = cat?.code ?? CAT_NAME_TO_TYPE[f['费用类别']]
+  if (typeCode && EXPENSE_TYPE_MAP[typeCode]) form.expense_type = typeCode as ExpenseType
+}
+
 async function handleUpload(row: ItemRow, opts: UploadRequestOptions) {
   ocrLoading.value = true
   try {
@@ -97,17 +117,21 @@ async function handleUpload(row: ItemRow, opts: UploadRequestOptions) {
     const hasAny =
       f && (['发票号', '费用日期', '金额(元)', '费用说明', '费用类别'] as const).some((k) => f[k])
     if (hasAny) {
-      if (rowIsBlank(row)) {
+      // 类型有默认值、说明/备注不回填，以标题判断基本信息是否已填
+      const formBlank = !form.title.trim()
+      if (rowIsBlank(row) && formBlank) {
         applyOcrFields(row, f)
+        applyOcrToForm(f)
         ElMessage.success(`已上传并识别票面：${f['费用说明'] || f['费用类别'] || ''}`)
       } else {
         try {
           await ElMessageBox.confirm(
-            '发票识别到明细信息，是否覆盖当前已填内容？（识别为空的字段保留原值）',
+            '发票识别到信息，是否覆盖当前已填的明细与基本信息？（识别为空的字段保留原值）',
             '发票识别',
             { confirmButtonText: '覆盖', cancelButtonText: '保留已填', type: 'info' },
           )
           applyOcrFields(row, f)
+          applyOcrToForm(f)
         } catch {
           /* 用户选择保留已填内容 */
         }
