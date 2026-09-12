@@ -49,3 +49,69 @@ def extract_fields(text: str) -> dict:
 def key_fields_complete(fields: dict) -> bool:
     """路由用：关键字段（发票号+价税合计）是否齐全"""
     return all(fields.get(k) for k in KEY_FIELDS)
+
+
+# ---------- 报销明细五字段抽取（上传发票自动回填用） ----------
+
+# 旧版专票票头 "No 01096036"（:后是发票代码，须截断）
+_RE_NO_PREFIX = re.compile(r"No\.?\s*(\d{8,20})")
+_RE_YEN = re.compile(r"[¥￥]([\d,]+(?:\.\d+)?)")
+
+# 费用类别关键词（对齐种子六类，按优先级先后；"酒"易误伤"酒店"故不入餐饮关键词）
+_CATEGORY_RULES = [
+    ("差旅费", ("机票", "火车", "航空", "客运", "差旅", "动车")),
+    ("餐饮费", ("餐", "宴", "食品")),
+    ("住宿费", ("住宿", "酒店", "宾馆")),
+    ("市内交通费", ("出租", "网约", "滴滴", "公交", "地铁")),
+    ("办公用品费", ("办公", "耗材", "设备", "纸张", "文具")),
+]
+
+
+def _normalize_date(raw: str) -> str:
+    """'2018年08月07日'/'2018-8-7' → 'YYYY-MM-DD'；不合法返回空串"""
+    m = re.search(r"(20\d{2})\s*[年-]\s*(\d{1,2})\s*[月-]\s*(\d{1,2})日?", raw)
+    return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}" if m else ""
+
+
+def extract_item_fields(text: str) -> dict:
+    """OCR全文 → 报销明细五字段（英文键）；缺失为空串，绝不编造"""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    d = {"invoice_no": "", "expense_date": "", "amount": "",
+         "description": "", "category_name": ""}
+
+    # 发票号：发票号码: → No前缀 → 单独成行的8-20位纯数字
+    for pat in (_RE_INVOICE_NO, _RE_NO_PREFIX):
+        if m := pat.search(text):
+            d["invoice_no"] = m.group(1)
+            break
+    if not d["invoice_no"]:
+        d["invoice_no"] = next((ln for ln in lines if re.fullmatch(r"\d{8,20}", ln)), "")
+
+    # 日期：复用KIE日期正则后归一化为表单格式
+    if m := _RE_DATE.search(text):
+        d["expense_date"] = _normalize_date(m.group(1))
+
+    # 金额：价税合计行之后4行内的 ¥金额（大写/税号行可能穿插）；兜底取全文最大¥值
+    for i, ln in enumerate(lines):
+        if "价税合计" in ln:
+            if m := _RE_YEN.search(" ".join(lines[i:i + 4])):
+                d["amount"] = _clean_amount(m.group(1))
+                break
+    if not d["amount"]:
+        if amts := _RE_YEN.findall(text):
+            d["amount"] = _clean_amount(max(amts, key=lambda s: float(_clean_amount(s))))
+
+    # 费用说明：*纯中文品类*货物名 明细行（密码区乱码行品类段非纯中文，天然排除）
+    for ln in lines:
+        if m := re.match(r"\*([一-龥]+)\*(.+)", ln):
+            d["description"] = m.group(2).strip()
+            break
+
+    # 类别：全文关键词归类
+    for cat, kws in _CATEGORY_RULES:
+        if any(k in text for k in kws):
+            d["category_name"] = cat
+            break
+    else:
+        d["category_name"] = "其他费用"
+    return d

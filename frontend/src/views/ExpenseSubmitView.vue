@@ -5,7 +5,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules, UploadRequestOptions } from 'element-plus'
 import { createExpense, getExpense, submitExpense, updateExpense } from '@/api/expense'
-import { uploadInvoice } from '@/api/upload'
+import { uploadInvoiceOcr } from '@/api/upload'
+import type { OcrFields } from '@/api/upload'
 import { listCategories } from '@/api/category'
 import { EXPENSE_TYPE_MAP, formatAmount } from '@/constants'
 import type { Category, ExpenseType } from '@/types'
@@ -19,6 +20,7 @@ const editId = computed(() => (route.params.id ? Number(route.params.id) : null)
 const formRef = ref<FormInstance>()
 const saving = ref(false)
 const submitting = ref(false)
+const ocrLoading = ref(false) // 发票上传+OCR识别进行中
 const categories = ref<Category[]>([])
 
 const form = reactive({
@@ -61,18 +63,62 @@ function removeItem(index: number) {
   form.items.splice(index, 1)
 }
 
-// 行内上传发票文件（el-upload自定义http-request）
-async function handleUpload(
-  row: { invoice_url?: string | null; invoice_filename?: string },
-  opts: UploadRequestOptions,
-) {
+// 行内上传发票文件（el-upload自定义http-request）：上传后OCR识别票面
+type ItemRow = (typeof form.items)[number]
+
+// 行是否完全未填（用于判断直接填充还是询问覆盖）
+function rowIsBlank(row: ItemRow): boolean {
+  return (
+    !row.category_id &&
+    !row.description.trim() &&
+    row.amount == null &&
+    !row.expense_date &&
+    !row.invoice_no.trim()
+  )
+}
+
+// 应用识别结果：只覆盖识别出非空的字段，其余保留用户已填内容
+function applyOcrFields(row: ItemRow, f: OcrFields) {
+  if (f['发票号']) row.invoice_no = f['发票号']
+  if (f['费用日期']) row.expense_date = f['费用日期']
+  if (f['金额(元)']) row.amount = Number(f['金额(元)'])
+  if (f['费用说明']) row.description = f['费用说明']
+  const catId = f.category_id ?? categories.value.find((c) => c.name === f['费用类别'])?.id
+  if (catId) row.category_id = catId
+}
+
+async function handleUpload(row: ItemRow, opts: UploadRequestOptions) {
+  ocrLoading.value = true
   try {
-    const r = await uploadInvoice(opts.file)
+    const r = await uploadInvoiceOcr(opts.file)
     row.invoice_url = r.url
     row.invoice_filename = r.filename
-    ElMessage.success(`已上传 ${r.filename}`)
+    const f = r.fields
+    const hasAny =
+      f && (['发票号', '费用日期', '金额(元)', '费用说明', '费用类别'] as const).some((k) => f[k])
+    if (hasAny) {
+      if (rowIsBlank(row)) {
+        applyOcrFields(row, f)
+        ElMessage.success(`已上传并识别票面：${f['费用说明'] || f['费用类别'] || ''}`)
+      } else {
+        try {
+          await ElMessageBox.confirm(
+            '发票识别到明细信息，是否覆盖当前已填内容？（识别为空的字段保留原值）',
+            '发票识别',
+            { confirmButtonText: '覆盖', cancelButtonText: '保留已填', type: 'info' },
+          )
+          applyOcrFields(row, f)
+        } catch {
+          /* 用户选择保留已填内容 */
+        }
+      }
+    } else {
+      ElMessage.success(`已上传 ${r.filename}`) // 识别失败/无有效字段：仅上传
+    }
   } catch {
     /* 错误提示由request拦截器统一弹出 */
+  } finally {
+    ocrLoading.value = false
   }
 }
 
@@ -226,7 +272,7 @@ onMounted(async () => {
         </el-row>
       </el-card>
 
-      <el-card shadow="never" class="form-card">
+      <el-card v-loading="ocrLoading" shadow="never" class="form-card">
         <template #header>
           <div class="card-header-flex">
             <span>费用明细（金额合计：¥{{ formatAmount(totalAmount) }}）</span>
