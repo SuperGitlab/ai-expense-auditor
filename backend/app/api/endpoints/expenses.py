@@ -14,8 +14,11 @@ from app.models import (Expense, ExpenseStatus, ExpenseType, User,
 from app.schemas.expense import (ExpenseCreate, ExpenseListResponse,
                                  ExpenseResponse, ExpenseUpdate)
 from app.services import expense_service
+from app.tasks.review import run_ai_review
 
 router = APIRouter(prefix="/api/expenses", tags=["报销管理"])
+
+logger = logging.getLogger(__name__)
 
 
 # @router.post("", response_model=ExpenseResponse, status_code=status.HTTP_201_CREATED)
@@ -86,7 +89,8 @@ def delete_expense(expense_id: int, db: DBSession, current_user: CurrentUser):
 
 async def run_review_in_background(expense_id: int) -> None:
     """
-    后台执行AI审核（BackgroundTasks：响应发出后才跑）
+    进程内AI审核兜底（BackgroundTasks：响应发出后才跑）。
+    正常路径走Celery任务app.tasks.review.run_ai_review；broker不可用时降级到这里。
     必须自开session——请求里的db随请求结束已关闭，传进来必炸
     """
     from app.agents.workflow import workflow as review_workflow
@@ -123,7 +127,12 @@ async def submit_expense(
     expense = expense_service.submit_expense(db, expense_id, current_user)
 
     if settings.AGENT_REVIEW_ON_SUBMIT:
-        background_tasks.add_task(run_review_in_background, expense_id)
+        try:
+            run_ai_review.delay(expense_id)  # Celery队列：削峰/持久化/多worker
+        except Exception as e:
+            # broker不可用（本地没起Redis等）：降级回进程内后台执行，提交不受影响
+            logger.warning(f"任务队列不可用，降级为进程内AI审核: {e}")
+            background_tasks.add_task(run_review_in_background, expense_id)
 
     return expense
 

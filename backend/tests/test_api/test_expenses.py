@@ -139,3 +139,53 @@ def test_cancel_after_manager_approved_forbidden(client, db_session):
     db_session.commit()
     resp = client.post(f"/api/expenses/{expense_id}/cancel", headers=headers)
     assert resp.status_code == 400
+
+
+@requires_db
+def test_submit_dispatches_to_celery(client, monkeypatch):
+    """提交派发Celery任务：broker正常时经.delay入队"""
+    from app.api.endpoints import expenses as expenses_module
+    from app.config import settings
+
+    dispatched = []
+
+    class _StubTask:
+        def delay(self, expense_id):
+            dispatched.append(expense_id)
+
+    monkeypatch.setattr(settings, "AGENT_REVIEW_ON_SUBMIT", True)
+    monkeypatch.setattr(expenses_module, "run_ai_review", _StubTask())
+
+    headers = register_and_login(client, "exp_celery1")
+    resp = client.post("/api/expenses", json=EXPENSE_PAYLOAD, headers=headers)
+    expense_id = resp.json()["id"]
+    resp = client.post(f"/api/expenses/{expense_id}/submit", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert dispatched == [expense_id]
+
+
+@requires_db
+def test_submit_falls_back_when_broker_down(client, monkeypatch):
+    """broker不可用：提交不失败，降级回进程内后台执行"""
+    from app.api.endpoints import expenses as expenses_module
+    from app.config import settings
+
+    class _BrokenTask:
+        def delay(self, expense_id):
+            raise ConnectionError("redis down")
+
+    fell_back = []
+
+    async def _fake_bg(expense_id):
+        fell_back.append(expense_id)
+
+    monkeypatch.setattr(settings, "AGENT_REVIEW_ON_SUBMIT", True)
+    monkeypatch.setattr(expenses_module, "run_ai_review", _BrokenTask())
+    monkeypatch.setattr(expenses_module, "run_review_in_background", _fake_bg)
+
+    headers = register_and_login(client, "exp_celery2")
+    resp = client.post("/api/expenses", json=EXPENSE_PAYLOAD, headers=headers)
+    expense_id = resp.json()["id"]
+    resp = client.post(f"/api/expenses/{expense_id}/submit", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert fell_back == [expense_id]

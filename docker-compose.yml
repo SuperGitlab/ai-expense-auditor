@@ -68,6 +68,37 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # AI审核worker：提交报销单后由它执行Celery任务（Agent日志打在这里）
+  celery-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: expense_celery_worker
+    environment:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg2://user:password@db:5432/expense_db}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      APP_ENV: production
+      DEBUG: "False"
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-env}
+      JWT_SECRET_KEY: ${SECRET_KEY:-change-me-in-env}
+      GLM_API_KEY: ${GLM_API_KEY:-}
+      GLM_API_BASE: ${GLM_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
+      MODEL_NAME: ${MODEL_NAME:-glm-5.1}
+      OCR_PROVIDER: ${OCR_PROVIDER:-hybrid}
+    command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info"]
+    volumes:
+      # 与backend共享：OCR读发票文件(uploads)、RAG检索与知识库回填(data/chroma)
+      - uploads:/app/backend/uploads
+      - appdata:/app/backend/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend

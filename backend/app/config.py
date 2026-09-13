@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # Redis配置
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # Celery任务队列（AI审核）：db1做broker、db2存任务结果（db0已被报表缓存占用）
+    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
+
     # LLM配置(GLM)
     GLM_API_KEY: str
     # GLM官方OpenAI兼容API地址；必须显式指定，否则ChatOpenAI会静默指向api.openai.com导致401

@@ -1,0 +1,87 @@
+"""
+Celery任务测试（直接调用任务函数=内联执行任务体，不起worker/broker）
+"""
+from sqlalchemy.orm import sessionmaker
+
+from app.models import Expense, ExpenseStatus
+
+from tests.conftest import register_and_login, requires_db
+
+
+class _FakeWorkflow:
+    """假工作流：记录调用；配置了异常则在run时抛出"""
+
+    def __init__(self, exc: Exception | None = None):
+        self.calls = []
+        self._exc = exc
+
+    async def run(self, db, expense_id):
+        self.calls.append(expense_id)
+        if self._exc:
+            raise self._exc
+        return {}
+
+
+def _create_expense(client) -> int:
+    """建一张草稿报销单，返回id（任务测试的被审对象）"""
+    headers = register_and_login(client, "task_r1")
+    resp = client.post(
+        "/api/expenses",
+        json={
+            "title": "任务测试",
+            "expense_type": "travel",
+            "items": [
+                {
+                    "category_id": 1,
+                    "description": "测试明细",
+                    "amount": "100.00",
+                    "expense_date": "2026-08-20",
+                }
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
+def _setup(monkeypatch, db_engine, fake):
+    """把任务体内的两个惰性import目标换成测试替身：workflow→假对象、SessionLocal→测试库工厂"""
+    import app.agents.workflow as wf
+    import app.database as database_module
+
+    factory = sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
+    monkeypatch.setattr(database_module, "SessionLocal", factory)
+    monkeypatch.setattr(wf, "workflow", fake)
+    return factory
+
+
+@requires_db
+def test_task_runs_workflow(client, db_session, db_engine, monkeypatch):
+    """任务体执行工作流并返回reviewed结果"""
+    from app.tasks.review import run_ai_review
+
+    fake = _FakeWorkflow()
+    _setup(monkeypatch, db_engine, fake)
+
+    expense_id = _create_expense(client)
+    result = run_ai_review(expense_id)  # 直接调用=内联执行（.delay才走broker）
+
+    assert fake.calls == [expense_id]
+    assert result == f"expense#{expense_id} reviewed"
+
+
+@requires_db
+def test_task_fallback_pending(client, db_session, db_engine, monkeypatch):
+    """工作流抛异常：任务不抛出，单据保守转PENDING人工"""
+    from app.tasks.review import run_ai_review
+
+    factory = _setup(monkeypatch, db_engine, _FakeWorkflow(exc=RuntimeError("boom")))
+
+    expense_id = _create_expense(client)
+    result = run_ai_review(expense_id)
+
+    assert "fallback_to_pending" in result
+    with factory() as check:
+        exp = check.query(Expense).filter(Expense.id == expense_id).one()
+        assert exp.status == ExpenseStatus.PENDING

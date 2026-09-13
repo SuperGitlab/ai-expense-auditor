@@ -65,6 +65,11 @@ uv run python scripts/init_knowledge.py
 
 # Start the server (must run inside backend/ — data dirs are relative to CWD)
 uv run uvicorn app.main:app --reload --port 8000
+
+# AI review worker (separate terminal; runs reviews after each submit, agent logs land here)
+# Requires a local Redis: docker run -d -p 6379:6379 redis:7
+uv run celery -A app.tasks.celery_app worker --loglevel=info --pool=solo   # Windows requires --pool=solo
+# Without worker/Redis, submits still work: falls back to in-process execution
 ```
 
 Swagger docs: <http://localhost:8000/api/docs>

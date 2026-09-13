@@ -65,6 +65,11 @@ uv run python scripts/init_knowledge.py
 
 # 启动（务必在 backend/ 目录下，数据目录相对CWD落盘）
 uv run uvicorn app.main:app --reload --port 8000
+
+# AI审核worker（另开终端；提交报销单后由它跑审核，Agent日志打在这里）
+# 本地需先启动Redis：docker run -d -p 6379:6379 redis:7
+uv run celery -A app.tasks.celery_app worker --loglevel=info --pool=solo   # Windows必须--pool=solo
+# 不启动worker/Redis也不影响提交：自动降级为uvicorn进程内执行
 ```
 
 启动后访问 Swagger 文档：<http://localhost:8000/api/docs>
