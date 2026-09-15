@@ -15,7 +15,7 @@ AI handles the clear-cut claims (auto-approve / auto-reject) so humans can focus
 - 📚 **RAG knowledge base**: ChromaDB + GLM embeddings, retrieving both company policies and similar historical cases; every review is written back as a new case (data flywheel)
 - ✅ **Human approval center**: manager sees own department, finance/admin see all; AI reviews and human approvals share one timeline
 - 💰 **Payment registration**: approved → paid (the actual bank transfer happens outside the system)
-- 📏 **Rule management**: maintain review rules (amount / invoice / date / duplicate invoice) with three severity levels: BLOCK / REVIEW / WARN
+- 📏 **Rule management**: maintain review rules (amount / invoice / date / duplicate invoice) with three severity levels: BLOCK / REVIEW / WARN; bulk import via JSON or policy-document extraction
 - 📊 **Reports**: summary, monthly trends, category breakdown (Redis cache, optional)
 
 ## Tech Stack
@@ -111,4 +111,5 @@ Not yet implemented or half-done — contributions welcome:
 | 👥 User management UI | ✅ Done | `/users` page for admin: role change + enable/disable, self-modification blocked |
 | 🔗 Multi-level approval | ✅ Done | Fixed two-level chain: manager first review (own department) → finance final approval; new `manager_approved` status, `approvals.step` audit trail, approval center split into first/final queues, admin override, auto-skip when no manager in department |
 | 🐳 Containerized deploy | ✅ Done | `docker compose up -d --build` starts the full stack (PostgreSQL/Redis/backend/nginx frontend + one-shot init & seed accounts); uploads/Chroma/logs persisted in volumes; optional `--profile knowledge` init; see `.env.docker.example` |
-| 🧪 Test coverage | ✅ Done | 110 pytest cases: auth / expenses / two-level approval chain / notifications / uploads / OCR pipeline / users / rules / categories / reports / agent endpoints; DB-gated tests auto-skip when unreachable |
+| 📥 Rule & policy bulk import | ✅ Done | "Import" on the rule-management page: ① JSON direct import (fields mirror the Rule table, categories referenced by `category_code`; full validation with per-row errors, all-or-nothing atomic write, never touches Chroma) ② Policy-document import for docx/pdf (parse → LLM extracts rule drafts with verbatim quotes → human preview/edit → confirm: rules into MySQL + verbatim sections chunked into Chroma; append / replace modes, replace clears only the policies store and never touches similar_cases) |
+| 🧪 Test coverage | ✅ Done | 159 pytest cases: auth / expenses / two-level approval chain / notifications / uploads / OCR pipeline / users / rules / categories / reports / agent endpoints / rule import (JSON + document extraction); DB-gated tests auto-skip when unreachable |

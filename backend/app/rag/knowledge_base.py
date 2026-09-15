@@ -6,6 +6,8 @@ import logging  # Python内置日志库；logger.info() 打出的信息带模块
 
 import uuid  # 生成全局唯一随机ID（uuid4），给每个知识块当主键用
 
+from datetime import datetime  # 给制度导入块打导入时间戳（Chroma metadata只收标量，存ISO字符串）
+
 from typing import Optional  # 类型标注工具（本文件当前未实际使用，保留的历史导入）
 
 from app.rag.vectorstore import VectorStore  # 向量库的门面类：内部封装ChromaDB的增/查/计数
@@ -80,11 +82,14 @@ class KnowledgeBaseManager:
             content = doc.get("content", "")  # 取正文；没写content键则当空串（切出来是[]，等于跳过）
             for i, chunk in enumerate(split_text(content)):  # 切块，enumerate顺便拿到块序号i
                 texts.append(chunk)  # 块文本（之后会被embedding变成1024维向量）
-                metadatas.append({  # 块的"标签"：检索命中后能显示出处，也支持按标签过滤
+                meta = {  # 块的"标签"：检索命中后能显示出处，也支持按标签过滤
                     "source": doc.get("source", "公司财务制度"),  # 来自哪份文档（有默认值，可不填）
                     "section": doc.get("section", ""),  # 章节名，如"差旅费管理"
                     "chunk_index": i,  # 这是该篇的第几块，便于把同一篇的块按顺序拼回去
-                })
+                }
+                # 合并调用方附加键（如制度导入的doc_id/imported_at）；不传则行为不变
+                meta.update(doc.get("metadata") or {})
+                metadatas.append(meta)
                 # 唯一ID：前缀policy- + uuid4取12位hex；每次随机生成，绝不与已有块撞车
                 ids.append(f"policy-{uuid.uuid4().hex[:12]}")
         if not texts:  # 传入的文档全是空的 → 没有任何块要入库
@@ -93,6 +98,48 @@ class KnowledgeBaseManager:
         added = self.policies_store.add_documents(texts, metadatas, ids)
         logger.info(f"财务制度入库：{added} 块")
         return added  # 返回块数（注意≠篇数：超500字的长文档会被切成多块）
+
+    def clear_policies(self) -> bool:
+        """
+        仅清空制度库policies（similar_cases案例库绝不受影响）——"替换全部导入"用
+
+        与reset()的区别：reset是开发调试用，两个库全删；这里只动policies，
+        历史案例是AI审核回填积累的资产，换制度文档没有理由清它。
+        """
+        ok = self.policies_store.reset()
+        if ok:
+            logger.info("制度库已清空（similar_cases案例库不受影响）")
+        return ok
+
+    def import_policy_document(
+        self, sections: list[dict], source: str, replace: bool = False
+    ) -> tuple[int, bool]:
+        """
+        制度文档章节入库（原文切块，不经LLM转述——保真）
+
+        Args:
+            sections: [{title, content}]（split_sections的产出）
+            source: 文档来源名（Chroma metadata.source）
+            replace: True=先清空policies再写入（新版制度整体生效语义）
+        Returns: (入库块数, 是否执行了清空)
+        """
+        cleared = self.clear_policies() if replace else False
+        # 附加元数据：doc_id标识本次导入批次（为将来按文档定向删除埋点），
+        # imported_at记录导入时间（Chroma metadata只收标量，存ISO字符串）
+        extra = {
+            "doc_id": uuid.uuid4().hex[:12],
+            "imported_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        docs = [
+            {
+                "content": s.get("content", ""),
+                "source": source,
+                "section": s.get("title", ""),
+                "metadata": extra,
+            }
+            for s in sections
+        ]
+        return self.add_policy_documents(docs), cleared
 
     def add_case_from_expense(self, snapshot: dict, decision: dict) -> int:
         """

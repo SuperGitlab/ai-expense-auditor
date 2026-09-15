@@ -5,7 +5,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { createRule, deleteRule, listRules, updateRule } from '@/api/rule'
 import { listCategories } from '@/api/category'
-import { OPERATOR_MAP, RULE_TYPE_MAP, SEVERITY_MAP } from '@/constants'
+import RuleImportDialog from '@/components/RuleImportDialog.vue'
+import { OPERATOR_MAP, RULE_FIELD_OPTIONS, RULE_TYPE_MAP, SEVERITY_MAP } from '@/constants'
 import type { Category, Rule, RuleOperator, RuleSeverity, RuleType } from '@/types'
 
 const loading = ref(false)
@@ -14,6 +15,7 @@ const categories = ref<Category[]>([])
 
 const formRef = ref<FormInstance>()
 const dialogVisible = ref(false)
+const importVisible = ref(false) // 导入规则对话框
 const editingId = ref<number | null>(null) // null=新建
 const saving = ref(false)
 
@@ -33,13 +35,6 @@ const emptyForm = () => ({
 })
 
 const dialog = reactive({ form: emptyForm() })
-
-const FIELD_OPTIONS = [
-  { value: 'amount', label: '金额(amount)' },
-  { value: 'expense_date', label: '费用日期(expense_date)' },
-  { value: 'invoice_no', label: '发票号(invoice_no)' },
-  { value: 'description', label: '费用说明(description)' },
-]
 
 const rules_: FormRules = {
   name: [{ required: true, message: '请输入规则名称', trigger: 'blur' }],
@@ -162,9 +157,14 @@ onMounted(load)
   <div class="page-container">
     <div class="page-header">
       <h2>规则管理</h2>
-      <el-button type="primary" @click="openCreate">
-        <el-icon><Plus /></el-icon>&nbsp;新建规则
-      </el-button>
+      <div>
+        <el-button @click="importVisible = true">
+          <el-icon><Upload /></el-icon>&nbsp;导入规则
+        </el-button>
+        <el-button type="primary" @click="openCreate">
+          <el-icon><Plus /></el-icon>&nbsp;新建规则
+        </el-button>
+      </div>
     </div>
 
     <el-card shadow="never">
@@ -263,7 +263,7 @@ onMounted(load)
           <el-col :span="12">
             <el-form-item label="作用字段" prop="field_name">
               <el-select v-model="dialog.form.field_name" style="width: 100%">
-                <el-option v-for="f in FIELD_OPTIONS" :key="f.value" :label="f.label" :value="f.value" />
+                <el-option v-for="f in RULE_FIELD_OPTIONS" :key="f.value" :label="f.label" :value="f.value" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -322,6 +322,9 @@ onMounted(load)
         <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 导入规则（JSON直导 / 制度文档智能导入） -->
+    <RuleImportDialog v-model="importVisible" @imported="load" />
   </div>
 </template>
 

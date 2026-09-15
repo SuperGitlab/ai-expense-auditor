@@ -15,7 +15,7 @@
 - 📚 **RAG 知识库**：ChromaDB 向量库 + GLM embedding，检索「公司制度」与「历史相似案例」；每次审核自动回填案例（数据飞轮）
 - ✅ **人工审批中心**：manager 限本部门、finance/admin 审全部，审批历史与 AI 审核共用同一时间线
 - 💰 **财务打款登记**：approved → paid，真实转账在系统外完成
-- 📏 **规则管理**：可视化维护审核规则（金额/发票/日期/重复发票），三级严重度 BLOCK / REVIEW / WARN
+- 📏 **规则管理**：可视化维护审核规则（金额/发票/日期/重复发票），三级严重度 BLOCK / REVIEW / WARN；支持批量导入（JSON 直导 + 制度文档智能抽取）
 - 📊 **报表统计**：总览、月度趋势、分类占比（Redis 缓存，可选）
 
 ## 技术栈
@@ -111,4 +111,5 @@ uv run pytest -m llm -v         # LLM 真实联调用例（需 GLM_API_KEY + 测
 | 👥 用户管理页面 | ✅ 已完成 | `/users` admin页面：改角色/启停，禁止操作自己 |
 | 🔗 多级审批流 | ✅ 已完成 | 固定两级链：经理初审（本部门）→ 财务终审；新增 `manager_approved` 状态、`approvals.step` 层级留痕、审批中心分待初审/待终审、admin 越级直批兜底、无经理部门自动跳过初审 |
 | 🐳 容器化部署 | ✅ 已完成 | `docker compose up -d --build` 一条命令起全栈（PostgreSQL/Redis/backend/nginx 前端 + 一次性 init 建库种子账户）；uploads/Chroma/日志全落卷；`--profile knowledge` 可选知识库初始化；见 `.env.docker.example` |
-| 🧪 测试覆盖 | ✅ 已完成 | 110 个 pytest 用例：认证 / 报销单 / 两级审批链 / 通知 / 上传 / OCR流水线 / 用户 / 规则 / 类别 / 报表 / AI审核接口全覆盖；DB 不可达时自动跳过 |
+| 📥 规则/制度批量导入 | ✅ 已完成 | 规则管理页「导入规则」：① JSON 直导（与 Rule 表字段对齐，类别用 category_code；全量校验、逐行中文报错、有错全拒、原子写入，不碰 Chroma）② 制度文档 docx/pdf 智能导入（解析→LLM 抽取规则草稿带原文依据→人工预览编辑→确认写入 Rule 表 + 原文切块入 Chroma；追加 / 替换两模式，替换仅清 policies 制度库、绝不动 similar_cases 案例库） |
+| 🧪 测试覆盖 | ✅ 已完成 | 159 个 pytest 用例：认证 / 报销单 / 两级审批链 / 通知 / 上传 / OCR流水线 / 用户 / 规则 / 类别 / 报表 / AI审核接口 / 规则导入（JSON直导 + 文档抽取）全覆盖；DB 不可达时自动跳过 |

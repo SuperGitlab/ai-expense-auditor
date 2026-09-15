@@ -57,6 +57,15 @@ export const OPERATOR_MAP: Record<RuleOperator, string> = {
   not_exists: '缺失/为空',
 }
 
+// 规则作用字段（与后端规则引擎 _field_value 映射约定；total_amount=整单总额）
+export const RULE_FIELD_OPTIONS: { value: string; label: string }[] = [
+  { value: 'amount', label: '金额(amount)' },
+  { value: 'total_amount', label: '单据总额(total_amount)' },
+  { value: 'expense_date', label: '费用日期(expense_date)' },
+  { value: 'invoice_no', label: '发票号(invoice_no)' },
+  { value: 'description', label: '费用说明(description)' },
+]
+
 export const AI_DECISION_MAP: Record<string, string> = {
   auto_approve: '自动通过',
   manual_review: '转人工审批',
