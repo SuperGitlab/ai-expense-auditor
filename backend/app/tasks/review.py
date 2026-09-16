@@ -10,10 +10,11 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(name="review.run_ai_review")
-def run_ai_review(expense_id: int) -> str:
+def run_ai_review(expense_id: int, resume: bool = False) -> str:
     """
     执行AI审核工作流（提交链路唯一执行方，无进程内降级）：
     自开session（worker进程独立于请求生命周期）、失败保守转PENDING人工。
+    resume=True断点续跑：复用已成功节点输出，仅重跑failed/未执行节点。
     workflow.run是async，worker里用asyncio.run驱动；返回字符串作为任务结果便于观测。
     """
     from app.agents.workflow import workflow as review_workflow
@@ -22,7 +23,7 @@ def run_ai_review(expense_id: int) -> str:
 
     db = SessionLocal()
     try:
-        asyncio.run(review_workflow.run(db, expense_id))
+        asyncio.run(review_workflow.run(db, expense_id, resume=resume))
         return f"expense#{expense_id} reviewed"
     except Exception as e:
         # AI审核失败：保守转人工，单据留在PENDING状态，不影响提交本身

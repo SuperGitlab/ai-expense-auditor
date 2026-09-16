@@ -9,14 +9,14 @@ from tests.conftest import register_and_login, requires_db
 
 
 class _FakeWorkflow:
-    """假工作流：记录调用；配置了异常则在run时抛出"""
+    """假工作流：记录调用（含resume参数）；配置了异常则在run时抛出"""
 
     def __init__(self, exc: Exception | None = None):
         self.calls = []
         self._exc = exc
 
-    async def run(self, db, expense_id):
-        self.calls.append(expense_id)
+    async def run(self, db, expense_id, *, resume=False):
+        self.calls.append((expense_id, resume))
         if self._exc:
             raise self._exc
         return {}
@@ -70,8 +70,22 @@ def test_task_runs_workflow(client, db_session, db_engine, monkeypatch):
     expense_id = _create_expense(client)
     result = run_ai_review(expense_id)  # 直接调用=内联执行（.delay才走broker）
 
-    assert fake.calls == [expense_id]
+    assert fake.calls == [(expense_id, False)]
     assert result == f"expense#{expense_id} reviewed"
+
+
+@requires_db
+def test_task_passes_resume_flag(client, db_session, db_engine, monkeypatch):
+    """resume=True（断点续跑）透传给workflow.run"""
+    from app.tasks.review import run_ai_review
+
+    fake = _FakeWorkflow()
+    _setup(monkeypatch, db_engine, fake)
+
+    expense_id = _create_expense(client)
+    run_ai_review(expense_id, resume=True)
+
+    assert fake.calls == [(expense_id, True)]
 
 
 @requires_db

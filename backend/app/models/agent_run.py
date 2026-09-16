@@ -1,9 +1,10 @@
 """
 Agent节点执行轨迹模型
 每轮AI审核5个节点（document/rule/rag/risk/decision）各自的状态，
-驱动前端画布实时可视化；重跑前由workflow清空旧轨迹（只保留最新一轮）
+驱动前端画布实时可视化；成功节点的输出JSON持久化在output_json，
+断点恢复时直接复用、不重调LLM
 """
-from sqlalchemy import (BigInteger, Column, DateTime, ForeignKey, String,
+from sqlalchemy import (BigInteger, Column, DateTime, ForeignKey, String, Text,
                         UniqueConstraint)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -40,6 +41,7 @@ class AgentNodeRun(Base):
     # 结果
     detail = Column(String(500), comment="结果摘要")
     error = Column(String(500), comment="失败原因")
+    output_json = Column(Text, comment="成功节点输出JSON（断点续跑checkpoint）")
 
     # 关联关系
     expense = relationship("Expense", back_populates="node_runs")

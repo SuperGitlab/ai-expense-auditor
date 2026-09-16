@@ -7,7 +7,8 @@ LangGraph审核工作流
 - 每个节点try/except：单个Agent失败写入errors给中性默认值，不让整图崩溃
 - 关键裁决（auto_approve/auto_reject）由确定性代码执行，LLM仅提供建议
 - _traced埋点：每节点running/succeeded/failed轨迹落agent_node_runs（画布可视化）
-- 人审优先守卫：落库前行锁读单据，人工已接管（状态≠SUBMITTED）则AI结论只留档不生效
+- 人审优先守卫：落库前行锁读单据，人工已接管（状态离开SUBMITTED/PENDING）则AI结论只留档不生效
+  （PENDING=Celery失败兜底态尚无人工决定，重跑/断点恢复的结果允许落库）
 """
 import json
 import logging
@@ -94,10 +95,36 @@ _NODE_SUMMARIES = {
     "decision": _summarize_decision,
 }
 
+# 节点名 → 其写入state的key（注意rule节点写的是rules复数键）
+# 断点恢复按此映射判断"本节点输出已在state里"→ 跳过重跑
+_NODE_STATE_KEYS = {
+    "document": "document",
+    "rule": "rules",
+    "rag": "rag",
+    "risk": "risk",
+    "decision": "decision",
+}
+
+_OUTPUT_JSON_LIMIT = 60_000  # TEXT 64KB守卫：超长放弃断点（该节点下次整跑）
+
+
+def _dump_output(value) -> str | None:
+    """节点输出序列化为checkpoint JSON；超长或不可序列化返回None（不存截断的坏JSON）"""
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError) as e:
+        logger.warning(f"节点输出不可序列化，放弃断点checkpoint: {e}")
+        return None
+    if len(text) > _OUTPUT_JSON_LIMIT:
+        logger.warning(f"节点输出超{_OUTPUT_JSON_LIMIT}字符，放弃断点checkpoint")
+        return None
+    return text
+
 
 def _record_node(
     db: Session, expense_id: int, node: str, status: str,
     detail: str | None = None, error: str | None = None,
+    output_json: str | None = None,
 ) -> AgentNodeRun:
     """按(expense_id,node) upsert节点轨迹并立即提交（画布3s轮询实时可见）"""
     run = db.query(AgentNodeRun).filter(
@@ -107,9 +134,13 @@ def _record_node(
         run = AgentNodeRun(expense_id=expense_id, node=node, started_at=utc_now())
         db.add(run)
     run.status = status
+    if status == "running":
+        # 重跑同一节点：刷新开始时间（续跑时长不失真、sweep判活准确），旧checkpoint作废
+        run.started_at = utc_now()
     run.finished_at = utc_now() if status != "running" else None
     run.detail = (detail or "")[:500] or None
     run.error = (error or "")[:500] or None
+    run.output_json = output_json
     db.commit()
     return run
 
@@ -121,19 +152,24 @@ def _node_session() -> Session:
 
 
 def _record_node_quiet(expense_id: int, node: str, status: str,
-                       detail: str | None = None, error: str | None = None) -> None:
+                       detail: str | None = None, error: str | None = None,
+                       output_json: str | None = None) -> None:
     """埋点写入失败不影响审核主流程（只log）"""
     try:
         with _node_session() as db:
-            _record_node(db, expense_id, node, status, detail, error)
+            _record_node(db, expense_id, node, status, detail, error, output_json)
     except Exception as e:
         logger.warning(f"节点轨迹写入失败（不影响审核）: {node}/{status}: {e}")
 
 
 def _traced(name: str, fn):
-    """节点埋点包装：进入记running；正常完成记succeeded+摘要；
-    节点降级（自身捕获异常返回errors）或抛异常记failed；异常继续上抛由外层兜底"""
+    """节点埋点包装：进入记running；正常完成记succeeded+摘要并持久化输出（断点checkpoint）；
+    节点降级（自身捕获异常返回errors）或抛异常记failed；异常继续上抛由外层兜底；
+    断点续跑：state里已有本节点输出（run(resume=True)注入）→ 跳过不重调、不重记埋点"""
     async def wrapped(state: ExpenseReviewState) -> dict:
+        key = _NODE_STATE_KEYS[name]
+        if state.get(key) is not None:
+            return {}  # 已有成功输出，画布保留原时间戳
         expense_id = state["expense_id"]
         _record_node_quiet(expense_id, name, "running")
         try:
@@ -146,7 +182,8 @@ def _traced(name: str, fn):
             _record_node_quiet(expense_id, name, "failed", error=str(node_errors[0]))
         else:
             _record_node_quiet(expense_id, name, "succeeded",
-                               detail=_NODE_SUMMARIES[name](result))
+                               detail=_NODE_SUMMARIES[name](result),
+                               output_json=_dump_output(result.get(key)))
         return result
     return wrapped
 
@@ -319,20 +356,46 @@ class ExpenseReviewWorkflow:
     def __init__(self):
         self.app = build_graph()
 
-    async def run(self, db: Session, expense_id: int) -> dict:
+    async def run(self, db: Session, expense_id: int, *, resume: bool = False) -> dict:
         """
         执行完整AI审核
+
+        Args:
+            resume: 断点续跑——保留已成功节点轨迹，其输出JSON注入state由_traced跳过，
+                    仅重跑failed/未执行节点（不重复调用LLM）
 
         Returns:
             dict: AIReviewResponse结构的审核结果
         """
         started = time.time()
 
-        # 0. 清空上一轮节点轨迹（画布只显示最新一轮）
-        db.query(AgentNodeRun).filter(AgentNodeRun.expense_id == expense_id).delete(
-            synchronize_session=False
-        )
-        db.commit()
+        if resume:
+            # 0a. 断点续跑：遗留running行（worker中断）标failed，画布不留假执行中
+            db.query(AgentNodeRun).filter(
+                AgentNodeRun.expense_id == expense_id,
+                AgentNodeRun.status == "running",
+            ).update(
+                {
+                    "status": "failed",
+                    "error": "执行中断（worker停止），已断点续跑",
+                    "finished_at": utc_now(),
+                    "output_json": None,
+                },
+                synchronize_session=False,
+            )
+            db.commit()
+            checkpoints = db.query(AgentNodeRun).filter(
+                AgentNodeRun.expense_id == expense_id,
+                AgentNodeRun.status == "succeeded",
+                AgentNodeRun.output_json.isnot(None),
+            ).all()
+        else:
+            # 0b. 整轮重跑：清空上一轮节点轨迹（画布只显示最新一轮）
+            db.query(AgentNodeRun).filter(AgentNodeRun.expense_id == expense_id).delete(
+                synchronize_session=False
+            )
+            db.commit()
+            checkpoints = []
 
         # 1. DB预加载（节点保持纯函数，不在图中持有Session）
         # 获取报销清单信息
@@ -361,6 +424,18 @@ class ExpenseReviewWorkflow:
             "errors": [],
             "started_at": started,
         }
+        # 断点注入：成功节点输出直接进state，_traced见自身key已存在即跳过（不重调LLM）
+        for row in checkpoints:
+            key = _NODE_STATE_KEYS.get(row.node)
+            if not key:
+                continue
+            try:
+                value = json.loads(row.output_json)
+            except (TypeError, ValueError):
+                logger.warning(f"节点{row.node}的checkpoint JSON损坏，忽略")
+                continue
+            if isinstance(value, dict):
+                init_state[key] = value
         final_state = await self.app.ainvoke(
             init_state, config={"recursion_limit": 20}
         )
@@ -426,10 +501,11 @@ class ExpenseReviewWorkflow:
                 ai_decision=action,
             )
 
-        if expense.status != ExpenseStatus.SUBMITTED:
-            # 人审优先守卫：AI执行期间人工已接管（状态离开SUBMITTED）
+        if expense.status not in (ExpenseStatus.SUBMITTED, ExpenseStatus.PENDING):
+            # 人审优先守卫：AI执行期间人工已接管（状态离开SUBMITTED/PENDING）
             # → 单据任何字段都不写（人审结果为准），AI结论仅留档：
             #   AI_REVIEW流水 + 决策节点标overridden
+            # （PENDING=Celery失败兜底态，尚无人工决定，重跑/断点恢复的结果允许落库）
             _record_node(db, expense_id, "decision", "overridden",
                          detail=(f"人审结果优先：人工已将单据流转为 {expense.status.value}，"
                                  f"AI裁决（{action}）仅留档"))

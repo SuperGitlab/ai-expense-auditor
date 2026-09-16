@@ -3,6 +3,7 @@ v2 幂等迁移：两级审批链
 1) expenses.status 枚举追加 manager_approved
 2) approvals 表新增 step 列（可重复执行，已存在则跳过）
 v3 幂等迁移：agent_node_runs 节点轨迹表（工作流画布/人工接管观测）
+v4 幂等迁移：agent_node_runs 补 output_json 列（断点恢复checkpoint）
 项目未用 Alembic，手动 DDL；新库经 init_db.py 建表即为新结构，无需本模块
 """
 import logging
@@ -92,3 +93,21 @@ def migrate_v3(engine: Engine) -> None:
                 "COMMENT '更新时间'"
             ))
     logger.info("migrate_v3 完成（agent_node_runs 节点轨迹表）")
+
+
+def migrate_v4(engine: Engine) -> None:
+    """幂等执行 v4 迁移：agent_node_runs 补 output_json 列（断点恢复checkpoint）
+    成功节点的输出JSON持久化于此，断点续跑时直接复用、不重调LLM
+    """
+    if engine.dialect.name != "mysql":
+        raise NotImplementedError(
+            f"migrate_v4 仅支持 MySQL（当前方言: {engine.dialect.name}）；"
+            "其他方言请重建库后走 init_db.py"
+        )
+    with engine.begin() as conn:
+        if not _column_exists(conn, "agent_node_runs", "output_json"):
+            conn.execute(text(
+                "ALTER TABLE agent_node_runs ADD COLUMN output_json TEXT NULL "
+                "COMMENT '成功节点输出JSON（断点续跑checkpoint）'"
+            ))
+    logger.info("migrate_v4 完成（agent_node_runs.output_json 断点checkpoint列）")

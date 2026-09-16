@@ -104,3 +104,28 @@ def test_normal_path_still_lands_when_submitted(client, db_session, monkeypatch)
     expense = db_session.get(Expense, expense_id)
     assert expense.status == ExpenseStatus.APPROVED
     assert float(expense.risk_score) == 20.0
+
+
+@requires_db
+def test_pending_expense_still_lands(client, db_session, monkeypatch):
+    """PENDING=Celery失败兜底态（尚无人工决定），重跑/断点恢复的AI结果应照常落库生效"""
+    _setup(monkeypatch)
+    headers = register_and_login(client, "race_e3")
+    resp = client.post("/api/expenses", json=PAYLOAD, headers=headers)
+    expense_id = resp.json()["id"]
+    client.post(f"/api/expenses/{expense_id}/submit", headers=headers)
+
+    # 模拟上一轮Celery任务异常兜底：SUBMITTED → PENDING（转人工队列）
+    expense = db_session.get(Expense, expense_id)
+    expense.status = ExpenseStatus.PENDING
+    db_session.commit()
+
+    asyncio.run(wf.workflow.run(db_session, expense_id))
+
+    db_session.expire_all()
+    expense = db_session.get(Expense, expense_id)
+    assert expense.status == ExpenseStatus.APPROVED      # 按AI裁决流转，不被守卫拦成只留档
+    assert float(expense.risk_score) == 20.0
+    assert expense.risk_level == "low"
+    ai_rows = [a for a in expense.approvals if a.action == ApprovalAction.AI_REVIEW]
+    assert ai_rows and ai_rows[-1].ai_decision == "auto_approve"
