@@ -52,7 +52,10 @@ def migrate_v2(engine: Engine) -> None:
 
 
 def migrate_v3(engine: Engine) -> None:
-    """幂等执行 v3 迁移：建 agent_node_runs 节点轨迹表（工作流画布）"""
+    """幂等执行 v3 迁移：建 agent_node_runs 节点轨迹表（工作流画布）
+    注意：Base 混入 created_at/updated_at 通用列，手写 DDL 必须带上；
+    旧版 DDL 漏过这两列（表已建好的环境靠下面的补列修复）
+    """
     if engine.dialect.name != "mysql":
         raise NotImplementedError(
             f"migrate_v3 仅支持 MySQL（当前方言: {engine.dialect.name}）；"
@@ -69,10 +72,23 @@ def migrate_v3(engine: Engine) -> None:
                 finished_at DATETIME NULL COMMENT '结束时间',
                 detail VARCHAR(500) NULL COMMENT '结果摘要',
                 error VARCHAR(500) NULL COMMENT '失败原因',
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME NULL COMMENT '更新时间',
                 PRIMARY KEY (id),
                 UNIQUE KEY uq_agent_node_runs_expense_node (expense_id, node),
                 CONSTRAINT fk_agent_node_runs_expense FOREIGN KEY (expense_id)
                     REFERENCES expenses (id)
             )
         """))
+        # 已用旧版DDL建过表的环境：补齐Base通用时间列（幂等，已存在则跳过）
+        if not _column_exists(conn, "agent_node_runs", "created_at"):
+            conn.execute(text(
+                "ALTER TABLE agent_node_runs ADD COLUMN created_at DATETIME "
+                "NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'"
+            ))
+        if not _column_exists(conn, "agent_node_runs", "updated_at"):
+            conn.execute(text(
+                "ALTER TABLE agent_node_runs ADD COLUMN updated_at DATETIME NULL "
+                "COMMENT '更新时间'"
+            ))
     logger.info("migrate_v3 完成（agent_node_runs 节点轨迹表）")
