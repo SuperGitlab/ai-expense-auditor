@@ -40,6 +40,7 @@ def takeover(body: ApprovalDecisionRequest, db: DBSession, current_user: Current
     """
     人工接管（人审优先）：AI执行中(SUBMITTED)/待初审(PENDING)/待终审(MANAGER_APPROVED)
     的单据，manager(本部门)/finance/admin 可随时直接批准/驳回；
+    finance/admin 对 SUBMITTED/PENDING 直达终审（紧急快速通道，留痕越级直批）；
     AI之后算出的结论只留档不生效（workflow落库守卫）；驳回必须填写意见
     """
     expense = approval_service.decide(db, current_user, body, takeover=True)

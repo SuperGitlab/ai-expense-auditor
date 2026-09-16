@@ -116,12 +116,62 @@ def test_manager_cannot_takeover_other_department(client):
 
 
 @requires_db
-def test_finance_cannot_takeover_submitted(client):
-    """finance对SUBMITTED接管→400（财务无初审权，两级链角色约束不变）"""
+def test_finance_takeover_approve_submitted(client, db_session):
+    """finance对SUBMITTED紧急接管通过→直达APPROVED（跳过经理初审，留痕[财务越级直批]）"""
     expense_id = _submitted_expense(client, "take_f1")
     headers = register_and_login(client, "take_fin1", role="finance")
-    resp = _takeover(client, headers, expense_id, "approve", "想直接过")
-    assert resp.status_code == 400
+
+    resp = _takeover(client, headers, expense_id, "approve", "紧急单据直批")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "approved"
+
+    expense = db_session.get(Expense, expense_id)
+    db_session.refresh(expense)
+    assert expense.status == ExpenseStatus.APPROVED
+    assert expense.approved_at is not None
+    rec = [a for a in expense.approvals if a.action == ApprovalAction.APPROVE][-1]
+    assert "[人工接管]" in rec.comment and "财务越级直批" in rec.comment
+    assert rec.step == "finance"
+
+
+@requires_db
+def test_finance_takeover_approve_pending(client, db_session):
+    """finance对PENDING（AI转人工待初审）紧急接管通过→同样直达APPROVED"""
+    expense_id = _submitted_expense(client, "take_f3")
+    headers = register_and_login(client, "take_fin3", role="finance")
+
+    db = db_session
+    expense = db.get(Expense, expense_id)
+    expense.status = ExpenseStatus.PENDING
+    db.commit()
+
+    resp = _takeover(client, headers, expense_id, "approve", "等初审太慢，直接过")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "approved"
+
+    db.refresh(expense)
+    assert expense.status == ExpenseStatus.APPROVED
+    rec = [a for a in expense.approvals if a.action == ApprovalAction.APPROVE][-1]
+    assert "财务越级直批" in rec.comment
+
+
+@requires_db
+def test_finance_takeover_reject_submitted(client, db_session):
+    """finance对SUBMITTED接管驳回→REJECTED；step记finance（与其approve一致，不冒充初审）"""
+    expense_id = _submitted_expense(client, "take_f4")
+    headers = register_and_login(client, "take_fin4", role="finance")
+
+    resp = _takeover(client, headers, expense_id, "reject", "发票不合规")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "rejected"
+
+    expense = db_session.get(Expense, expense_id)
+    db_session.refresh(expense)
+    assert expense.status == ExpenseStatus.REJECTED
+    assert expense.rejection_reason == "发票不合规"
+    rec = [a for a in expense.approvals if a.action == ApprovalAction.REJECT][-1]
+    assert "[人工接管]" in rec.comment
+    assert rec.step == "finance"
 
 
 @requires_db

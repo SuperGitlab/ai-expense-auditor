@@ -29,7 +29,8 @@ const byNode = (name: string): AgentNodeExecution | undefined =>
   nodes.value.find((n) => n.node === name)
 
 // 接管按钮显隐按角色对齐后端矩阵（跨部门等细节由后端兜底）：
-// manager: submitted/pending（限本部门）；finance: manager_approved；admin: 三状态皆可
+// manager: submitted/pending（限本部门）；finance/admin: 三状态皆可
+// （finance 对 submitted/pending 为紧急快速通道，批准直达已通过）
 const canTakeover = computed(() => {
   const s = expenseStatus.value
   if (!s) return false
@@ -37,7 +38,6 @@ const canTakeover = computed(() => {
     case 'manager':
       return ['submitted', 'pending'].includes(s)
     case 'finance':
-      return s === 'manager_approved'
     case 'admin':
       return ['submitted', 'pending', 'manager_approved'].includes(s)
     default:

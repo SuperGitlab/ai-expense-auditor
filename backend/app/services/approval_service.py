@@ -56,8 +56,10 @@ def decide(db: Session, user: User, req: ApprovalDecisionRequest, *,
     finance: MANAGER_APPROVED approve→APPROVED(写approved_at) / reject→REJECTED
     admin:   PENDING/MANAGER_APPROVED 越级直批→APPROVED（留痕）/ reject→REJECTED
 
-    takeover=True（人工接管，人审优先）：额外允许 SUBMITTED（AI执行中），
-    SUBMITTED 视同初审阶段走同一套流转；AI之后算出的结论不覆盖人工结果（workflow落库守卫）
+    takeover=True（人工接管，人审优先）：额外允许 SUBMITTED（AI执行中）与
+    PENDING（待初审）——manager 视同初审；finance/admin 直达 APPROVED 跳过初审
+    （紧急报销快速通道，留痕[管理员越级直批]/[财务越级直批]）；
+    AI之后算出的结论不覆盖人工结果（workflow落库守卫）
     """
     if not user.has_permission("approve"):
         raise HTTPException(status_code=403, detail="无审批权限")
@@ -66,13 +68,16 @@ def decide(db: Session, user: User, req: ApprovalDecisionRequest, *,
     if not expense:
         raise HTTPException(status_code=404, detail=f"报销单 {req.expense_id} 不存在")
 
-    # 角色可操作状态表（takeover把SUBMITTED并入manager/admin的初审阶段门槛）
+    # 角色可操作状态表（takeover=紧急放行通道：SUBMITTED/PENDING也可接管）
     if user.role == UserRole.MANAGER:
         allowed = {ExpenseStatus.PENDING}
         if takeover:
             allowed.add(ExpenseStatus.SUBMITTED)
     elif user.role == UserRole.FINANCE:
         allowed = {ExpenseStatus.MANAGER_APPROVED}
+        if takeover:
+            # 紧急报销快速通道：跳过经理初审直达终审
+            allowed |= {ExpenseStatus.SUBMITTED, ExpenseStatus.PENDING}
     else:  # admin：越级兜底，两级状态都可操作
         allowed = {ExpenseStatus.PENDING, ExpenseStatus.MANAGER_APPROVED}
         if takeover:
@@ -101,16 +106,17 @@ def decide(db: Session, user: User, req: ApprovalDecisionRequest, *,
         comment = f"[人工接管] {comment or ''}".strip()
 
     if req.action == "approve":
-        # step：初审(manager)停在 MANAGER_APPROVED；到达 APPROVED 记 finance（admin越级同样记finance）
+        # step：初审(manager)停在 MANAGER_APPROVED；到达 APPROVED 记 finance（admin/finance越级同样记finance）
         is_first_review = (
             user.role == UserRole.MANAGER
             and expense.status in (ExpenseStatus.PENDING, ExpenseStatus.SUBMITTED)
         )
         step = "manager" if is_first_review else "finance"
-        if user.role == UserRole.ADMIN and expense.status in (
+        if user.role in (UserRole.ADMIN, UserRole.FINANCE) and expense.status in (
             ExpenseStatus.PENDING, ExpenseStatus.SUBMITTED
         ):
-            comment = f"[管理员越级直批] {comment or ''}".strip()
+            prefix = "管理员越级直批" if user.role == UserRole.ADMIN else "财务越级直批"
+            comment = f"[{prefix}] {comment or ''}".strip()
         expense.status = (
             ExpenseStatus.MANAGER_APPROVED if is_first_review else ExpenseStatus.APPROVED
         )
@@ -119,8 +125,8 @@ def decide(db: Session, user: User, req: ApprovalDecisionRequest, *,
         expense.rejection_reason = None
         action = ApprovalAction.APPROVE
     else:
-        step = ("manager" if expense.status in (ExpenseStatus.PENDING, ExpenseStatus.SUBMITTED)
-                else "finance")
+        # step按角色推导：manager驳回=初审职责；finance/admin驳回=终审职责（与approve路径一致）
+        step = "manager" if user.role == UserRole.MANAGER else "finance"
         expense.status = ExpenseStatus.REJECTED
         expense.rejection_reason = req.comment or "审批驳回（未填写原因）"
         action = ApprovalAction.REJECT
