@@ -23,7 +23,7 @@ class _FakeWorkflow:
 
 
 def _create_expense(client) -> int:
-    """建一张草稿报销单，返回id（任务测试的被审对象）"""
+    """建一张报销单并提交（SUBMITTED），返回id（真实链路中任务只在提交后派发）"""
     headers = register_and_login(client, "task_r1")
     resp = client.post(
         "/api/expenses",
@@ -42,7 +42,10 @@ def _create_expense(client) -> int:
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
-    return resp.json()["id"]
+    expense_id = resp.json()["id"]
+    resp = client.post(f"/api/expenses/{expense_id}/submit", headers=headers)
+    assert resp.status_code == 200, resp.text
+    return expense_id
 
 
 def _setup(monkeypatch, db_engine, fake):
@@ -85,3 +88,24 @@ def test_task_fallback_pending(client, db_session, db_engine, monkeypatch):
     with factory() as check:
         exp = check.query(Expense).filter(Expense.id == expense_id).one()
         assert exp.status == ExpenseStatus.PENDING
+
+
+@requires_db
+def test_task_failure_keeps_human_decision(client, db_session, db_engine, monkeypatch):
+    """人审优先：人工已把单据流转为REJECTED后任务失败兜底，不再掰成PENDING"""
+    from app.tasks.review import run_ai_review
+
+    factory = _setup(monkeypatch, db_engine, _FakeWorkflow(exc=RuntimeError("boom")))
+
+    expense_id = _create_expense(client)
+    with factory() as s:
+        exp = s.query(Expense).filter(Expense.id == expense_id).one()
+        exp.status = ExpenseStatus.REJECTED
+        s.commit()
+
+    result = run_ai_review(expense_id)
+
+    assert "fallback_to_pending" in result  # 任务自身仍不抛
+    with factory() as check:
+        exp = check.query(Expense).filter(Expense.id == expense_id).one()
+        assert exp.status == ExpenseStatus.REJECTED  # 人的裁决不被兜底覆盖

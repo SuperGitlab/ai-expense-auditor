@@ -16,6 +16,7 @@
 - ✅ **人工审批中心**：manager 限本部门、finance/admin 审全部，审批历史与 AI 审核共用同一时间线
 - 💰 **财务打款登记**：approved → paid，真实转账在系统外完成
 - 📏 **规则管理**：可视化维护审核规则（金额/发票/日期/重复发票），三级严重度 BLOCK / REVIEW / WARN；支持批量导入（JSON 直导 + 制度文档智能抽取）
+- 🖥️ **工作流画布 + 人工接管**：详情抽屉实时显示各节点执行状态（单据解析 → 规则校验 ∥ RAG 检索 → 风险评估 → 终审裁决，3 秒轮询）；AI 执行期间经理/财务/管理员可随时直接批准/驳回——人审结果永远优先，AI 事后算出的结论只留档（节点标记「人审结果优先」），绝不覆盖
 - 📊 **报表统计**：总览、月度趋势、分类占比（Redis 缓存，可选）
 
 ## 技术栈
@@ -69,7 +70,7 @@ uv run uvicorn app.main:app --reload --port 8000
 # AI审核worker（另开终端；提交报销单后由它跑审核，Agent日志打在这里）
 # 本地需先启动Redis：docker run -d -p 6379:6379 redis:7
 uv run celery -A app.tasks.celery_app worker --loglevel=info --pool=solo   # Windows必须--pool=solo
-# 不启动worker/Redis也不影响提交：自动降级为uvicorn进程内执行
+# 提交依赖Redis与本worker：未启动时提交直接返回503明确报错（单据保持草稿，不降级）
 ```
 
 启动后访问 Swagger 文档：<http://localhost:8000/api/docs>
@@ -113,4 +114,5 @@ uv run pytest -m llm -v         # LLM 真实联调用例（需 GLM_API_KEY + 测
 | 🐳 容器化部署 | ✅ 已完成 | `docker compose up -d --build` 一条命令起全栈（PostgreSQL/Redis/backend/nginx 前端 + 一次性 init 建库种子账户）；uploads/Chroma/日志全落卷；`--profile knowledge` 可选知识库初始化；见 `.env.docker.example` |
 | 📥 规则/制度批量导入 | ✅ 已完成 | 规则管理页「导入规则」：① JSON 直导（与 Rule 表字段对齐，类别用 category_code；全量校验、逐行中文报错、有错全拒、原子写入，不碰 Chroma）② 制度文档 docx/pdf 智能导入（解析→LLM 抽取规则草稿带原文依据→人工预览编辑→确认写入 Rule 表 + 原文切块入 Chroma；追加 / 替换两模式，替换仅清 policies 制度库、绝不动 similar_cases 案例库） |
 | 🗂️ 费用类别管理 | ✅ 已完成 | admin「类别管理」页：增/改/停用/删除；code 唯一且创建后不可改；删除自动停用并解绑绑定规则，被历史明细引用时转停用不物理删除；新增类别自动进入明细下拉 / 规则绑定 / 规则导入（OCR 关键词识别仍限六个内置类别，新类别手选） |
-| 🧪 测试覆盖 | ✅ 已完成 | 163 个 pytest 用例：认证 / 报销单 / 两级审批链 / 通知 / 上传 / OCR流水线 / 用户 / 规则 / 类别 / 报表 / AI审核接口 / 规则导入（JSON直导 + 文档抽取）全覆盖；DB 不可达时自动跳过 |
+| 🖥️ 工作流画布 + 人工接管 | ✅ 已完成 | `GET /api/agent/executions/{id}` 提供逐节点轨迹（running/succeeded/failed/overridden，`_traced` 包装器 upsert 进 `agent_node_runs` 表）；详情抽屉自绘画布 3 秒轮询；`POST /api/approvals/takeover` 允许经理（限本部门）/财务/管理员对 SUBMITTED/PENDING/MANAGER_APPROVED 任意时刻裁决——工作流落库段行锁守卫保证人审终局（AI 结论仅存 `ai_review` 流水留档、决策节点标记「人审结果优先」）；驳回必须填意见；Redis/Celery 未启动时提交 503 快速失败（无进程内降级） |
+| 🧪 测试覆盖 | ✅ 已完成 | 185 个 pytest 用例：认证 / 报销单 / 两级审批链 / 通知 / 上传 / OCR流水线 / 用户 / 规则 / 类别 / 报表 / AI审核接口 / 规则导入（JSON直导 + 文档抽取）/ 节点埋点与人审优先竞态 全覆盖；DB 不可达时自动跳过 |

@@ -77,6 +77,7 @@ class Expense(Base):
     user = relationship("User", back_populates="expenses")
     items = relationship("ExpenseItem", back_populates="expense", cascade="all, delete-orphan")
     approvals = relationship("Approval", back_populates="expense", cascade="all, delete-orphan")
+    node_runs = relationship("AgentNodeRun", back_populates="expense", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Expense(id={self.id}, expense_no={self.expense_no}, status={self.status})>"

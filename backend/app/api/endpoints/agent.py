@@ -1,6 +1,6 @@
 """
 AI审核接口
-手动触发AI审核、查询工作流结构
+手动触发AI审核、查询工作流结构、节点执行轨迹
 """
 import logging
 
@@ -9,13 +9,22 @@ from fastapi import APIRouter, HTTPException
 from app.agents.workflow import workflow
 from app.api.deps import CurrentUser, DBSession
 from app.config import settings
-from app.models import ExpenseStatus, UserRole
+from app.models import AgentNodeRun, ExpenseStatus, UserRole
 from app.schemas.agent import AIReviewRequest, AIReviewResponse
 from app.services.expense_service import get_expense
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agent", tags=["AI审核"])
+
+# 节点顺序与中文名（画布固定结构，未启动节点也按此顺序补齐）
+_NODE_LABELS = {
+    "document": "单据解析",
+    "rule": "规则校验",
+    "rag": "RAG检索",
+    "risk": "风险评估",
+    "decision": "终审裁决",
+}
 
 
 @router.post("/review", response_model=AIReviewResponse)
@@ -65,3 +74,29 @@ def workflow_info(current_user: CurrentUser):
             "high_min": settings.RISK_HIGH_MIN,
         },
     }
+
+
+@router.get("/executions/{expense_id}")
+def get_executions(expense_id: int, db: DBSession, current_user: CurrentUser):
+    """
+    节点执行轨迹（工作流画布数据源，3s轮询）
+    权限同报销单读取：本人 / finance / admin / manager(本部门)
+    固定返回5节点全量：未启动的节点补 status=pending，画布结构稳定
+    """
+    expense = get_expense(db, expense_id, current_user)  # 404/403
+
+    runs = db.query(AgentNodeRun).filter(AgentNodeRun.expense_id == expense_id).all()
+    by_node = {r.node: r for r in runs}
+    nodes = []
+    for name in _NODE_LABELS:
+        run = by_node.get(name)
+        nodes.append({
+            "node": name,
+            "label": _NODE_LABELS[name],
+            "status": run.status if run else "pending",
+            "started_at": run.started_at if run else None,
+            "finished_at": run.finished_at if run else None,
+            "detail": run.detail if run else None,
+            "error": run.error if run else None,
+        })
+    return {"nodes": nodes, "expense_status": expense.status.value}

@@ -6,6 +6,8 @@ LangGraph审核工作流
 - errors字段配operator.add reducer（rule/rag并行节点都写它，必须声明合并策略）
 - 每个节点try/except：单个Agent失败写入errors给中性默认值，不让整图崩溃
 - 关键裁决（auto_approve/auto_reject）由确定性代码执行，LLM仅提供建议
+- _traced埋点：每节点running/succeeded/failed轨迹落agent_node_runs（画布可视化）
+- 人审优先守卫：落库前行锁读单据，人工已接管（状态≠SUBMITTED）则AI结论只留档不生效
 """
 import json
 import logging
@@ -23,8 +25,9 @@ from app.agents.rag_agent import RAGAgent
 from app.agents.risk_agent import RiskAgent
 from app.agents.rule_agent import RuleAgent
 from app.config import settings
-from app.models import (Approval, ApprovalAction, Expense, ExpenseStatus, Rule,
-                        UserRole)
+from app.database import SessionLocal
+from app.models import (AgentNodeRun, Approval, ApprovalAction, Expense,
+                        ExpenseStatus, Rule, UserRole)
 from app.rag.knowledge_base import KnowledgeBaseManager
 from app.services.expense_service import build_snapshot
 from app.services.notification_service import notify_ai_review
@@ -49,6 +52,103 @@ async def _run_with_log(agent: Any, input_data: dict) -> AgentResult:
         f"{_dump({'success': result.success, 'message': result.message, 'data': result.data})}"
     )
     return result
+
+
+# ===== 节点轨迹埋点（画布可视化 + 人工接管观测） =====
+def _summarize_document(r: dict) -> str:
+    doc = r.get("document", {})
+    anomalies = doc.get("anomalies") or []
+    summary = (doc.get("summary") or "").strip()
+    text = f"解析完成，异常{len(anomalies)}项"
+    return f"{text}：{summary[:60]}" if summary else text
+
+
+def _summarize_rule(r: dict) -> str:
+    v = r.get("rules", {})
+    blocked = "是" if v.get("hard_blocked") else "否"
+    return f"命中违规{len(v.get('violations') or [])}项，硬阻断={blocked}"
+
+
+def _summarize_rag(r: dict) -> str:
+    g = r.get("rag", {})
+    return f"检索制度{len(g.get('relevant_rules') or [])}条、相似案例{len(g.get('similar_cases') or [])}条"
+
+
+def _summarize_risk(r: dict) -> str:
+    k = r.get("risk", {})
+    return f"风险分{k.get('risk_score', '-')}（{k.get('risk_level', '-')}）"
+
+
+def _summarize_decision(r: dict) -> str:
+    d = r.get("decision", {})
+    reason = (d.get("reason") or "").strip()
+    text = f"裁决：{d.get('action', '-')}"
+    return f"{text}——{reason[:60]}" if reason else text
+
+
+_NODE_SUMMARIES = {
+    "document": _summarize_document,
+    "rule": _summarize_rule,
+    "rag": _summarize_rag,
+    "risk": _summarize_risk,
+    "decision": _summarize_decision,
+}
+
+
+def _record_node(
+    db: Session, expense_id: int, node: str, status: str,
+    detail: str | None = None, error: str | None = None,
+) -> AgentNodeRun:
+    """按(expense_id,node) upsert节点轨迹并立即提交（画布3s轮询实时可见）"""
+    run = db.query(AgentNodeRun).filter(
+        AgentNodeRun.expense_id == expense_id, AgentNodeRun.node == node
+    ).first()
+    if run is None:
+        run = AgentNodeRun(expense_id=expense_id, node=node, started_at=utc_now())
+        db.add(run)
+    run.status = status
+    run.finished_at = utc_now() if status != "running" else None
+    run.detail = (detail or "")[:500] or None
+    run.error = (error or "")[:500] or None
+    db.commit()
+    return run
+
+
+def _node_session() -> Session:
+    """节点轨迹专用短会话：节点本体保持纯函数不持有Session，
+    埋点独立开session即时提交，画布轮询才能看到执行中状态"""
+    return SessionLocal()
+
+
+def _record_node_quiet(expense_id: int, node: str, status: str,
+                       detail: str | None = None, error: str | None = None) -> None:
+    """埋点写入失败不影响审核主流程（只log）"""
+    try:
+        with _node_session() as db:
+            _record_node(db, expense_id, node, status, detail, error)
+    except Exception as e:
+        logger.warning(f"节点轨迹写入失败（不影响审核）: {node}/{status}: {e}")
+
+
+def _traced(name: str, fn):
+    """节点埋点包装：进入记running；正常完成记succeeded+摘要；
+    节点降级（自身捕获异常返回errors）或抛异常记failed；异常继续上抛由外层兜底"""
+    async def wrapped(state: ExpenseReviewState) -> dict:
+        expense_id = state["expense_id"]
+        _record_node_quiet(expense_id, name, "running")
+        try:
+            result = await fn(state)
+        except Exception as e:
+            _record_node_quiet(expense_id, name, "failed", error=str(e))
+            raise
+        node_errors = result.get("errors") or []
+        if node_errors:
+            _record_node_quiet(expense_id, name, "failed", error=str(node_errors[0]))
+        else:
+            _record_node_quiet(expense_id, name, "succeeded",
+                               detail=_NODE_SUMMARIES[name](result))
+        return result
+    return wrapped
 
 
 # ===== 共享状态定义 =====
@@ -171,11 +271,11 @@ def build_graph():
                        └→ rag  ┴→ risk → decision → END
     """
     graph = StateGraph(ExpenseReviewState)
-    graph.add_node("document", document_node)
-    graph.add_node("rule", rule_node)
-    graph.add_node("rag", rag_node)
-    graph.add_node("risk", risk_node)
-    graph.add_node("decision", decision_node)
+    graph.add_node("document", _traced("document", document_node))
+    graph.add_node("rule", _traced("rule", rule_node))
+    graph.add_node("rag", _traced("rag", rag_node))
+    graph.add_node("risk", _traced("risk", risk_node))
+    graph.add_node("decision", _traced("decision", decision_node))
 
     graph.add_edge(START, "document")
     graph.add_edge("document", "rule")    # fan-out：rule与rag并行
@@ -227,6 +327,12 @@ class ExpenseReviewWorkflow:
             dict: AIReviewResponse结构的审核结果
         """
         started = time.time()
+
+        # 0. 清空上一轮节点轨迹（画布只显示最新一轮）
+        db.query(AgentNodeRun).filter(AgentNodeRun.expense_id == expense_id).delete(
+            synchronize_session=False
+        )
+        db.commit()
 
         # 1. DB预加载（节点保持纯函数，不在图中持有Session）
         # 获取报销清单信息
@@ -280,8 +386,61 @@ class ExpenseReviewWorkflow:
             "risk_factors": risk.get("factors", []),
         }
 
+        result = {
+            "expense_id": expense_id,
+            "risk_level": risk_level,
+            "risk_score": risk_score,
+            "decision": action,
+            "review_result": json.dumps(review_result, ensure_ascii=False),
+            "suggestions": decision.get("suggestions", []),
+            "relevant_rules": rag_result.get("relevant_rules", []),
+            "similar_cases": rag_result.get("similar_cases", []),
+            "rule_violations": rules_result.get("violations", []),
+            "workflow_errors": errors,
+            "elapsed_seconds": elapsed,
+        }
+
         # 4. 落库：报销单AI字段 + 审批记录 + 状态流转
-        expense = db.query(Expense).filter(Expense.id == expense_id).first()
+        # 行锁读当前状态：人工接管与AI落库并发时，以先提交的事务为准
+        # （populate_existing强制按最新行刷新——会话identity map里可能还是快照时的旧状态）
+        expense = (
+            db.query(Expense)
+            .with_for_update()
+            .populate_existing()
+            .filter(Expense.id == expense_id)
+            .first()
+        )
+        if expense is None:
+            raise ValueError(f"报销单#{expense_id}不存在，AI审核结果无处落库")
+
+        def _ai_review_record() -> Approval:
+            """AI审核流水（无论是否被人审接管都留档，供时间线回看）"""
+            return Approval(
+                expense_id=expense_id,
+                approver_id=None,
+                approver_name="AI审核系统",
+                action=ApprovalAction.AI_REVIEW,
+                comment=decision.get("reason", ""),
+                risk_level=risk_level,
+                risk_score=risk_score,
+                ai_decision=action,
+            )
+
+        if expense.status != ExpenseStatus.SUBMITTED:
+            # 人审优先守卫：AI执行期间人工已接管（状态离开SUBMITTED）
+            # → 单据任何字段都不写（人审结果为准），AI结论仅留档：
+            #   AI_REVIEW流水 + 决策节点标overridden
+            _record_node(db, expense_id, "decision", "overridden",
+                         detail=(f"人审结果优先：人工已将单据流转为 {expense.status.value}，"
+                                 f"AI裁决（{action}）仅留档"))
+            db.add(_ai_review_record())
+            db.commit()
+            logger.info(
+                f"AI审核被人审接管 报销单#{expense_id}: 人工终态={expense.status.value} "
+                f"AI裁决={action}（仅留档不生效）"
+            )
+            return result
+
         expense.risk_level = risk_level
         expense.risk_score = risk_score
         expense.ai_review_result = json.dumps(review_result, ensure_ascii=False)
@@ -315,16 +474,7 @@ class ExpenseReviewWorkflow:
             else:
                 expense.status = ExpenseStatus.PENDING
 
-        db.add(Approval(
-            expense_id=expense_id,
-            approver_id=None,
-            approver_name="AI审核系统",
-            action=ApprovalAction.AI_REVIEW,
-            comment=decision.get("reason", ""),
-            risk_level=risk_level,
-            risk_score=risk_score,
-            ai_decision=action,
-        ))
+        db.add(_ai_review_record())
         db.commit()
 
         # 4.5 通知申请人（站内信必有、邮件尽力而为；失败不影响审核结果）
@@ -350,19 +500,7 @@ class ExpenseReviewWorkflow:
             f"耗时{elapsed}s 错误{len(errors)}个"
         )
 
-        return {
-            "expense_id": expense_id,
-            "risk_level": risk_level,
-            "risk_score": risk_score,
-            "decision": action,
-            "review_result": json.dumps(review_result, ensure_ascii=False),
-            "suggestions": decision.get("suggestions", []),
-            "relevant_rules": rag_result.get("relevant_rules", []),
-            "similar_cases": rag_result.get("similar_cases", []),
-            "rule_violations": rules_result.get("violations", []),
-            "workflow_errors": errors,
-            "elapsed_seconds": elapsed,
-        }
+        return result
 
 
 # 工作流单例

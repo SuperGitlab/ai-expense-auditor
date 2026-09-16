@@ -143,7 +143,7 @@ def test_cancel_after_manager_approved_forbidden(client, db_session):
 
 @requires_db
 def test_submit_dispatches_to_celery(client, monkeypatch):
-    """提交派发Celery任务：broker正常时经.delay入队"""
+    """提交派发Celery任务：队列探活通过时经.delay入队"""
     from app.api.endpoints import expenses as expenses_module
     from app.config import settings
 
@@ -154,6 +154,7 @@ def test_submit_dispatches_to_celery(client, monkeypatch):
             dispatched.append(expense_id)
 
     monkeypatch.setattr(settings, "AGENT_REVIEW_ON_SUBMIT", True)
+    monkeypatch.setattr(expenses_module, "_ensure_review_queue", lambda: None)
     monkeypatch.setattr(expenses_module, "run_ai_review", _StubTask())
 
     headers = register_and_login(client, "exp_celery1")
@@ -165,27 +166,57 @@ def test_submit_dispatches_to_celery(client, monkeypatch):
 
 
 @requires_db
-def test_submit_falls_back_when_broker_down(client, monkeypatch):
-    """broker不可用：提交不失败，降级回进程内后台执行"""
+def test_submit_rejected_when_queue_down(client, db_session, monkeypatch):
+    """队列不可用：提交直接503，单据保持草稿（不降级、不留半提交状态）"""
+    from fastapi import HTTPException
+
     from app.api.endpoints import expenses as expenses_module
     from app.config import settings
+    from app.models import Expense, ExpenseStatus
 
-    class _BrokenTask:
-        def delay(self, expense_id):
-            raise ConnectionError("redis down")
-
-    fell_back = []
-
-    async def _fake_bg(expense_id):
-        fell_back.append(expense_id)
+    def _boom():
+        raise HTTPException(status_code=503, detail="AI审核队列不可用")
 
     monkeypatch.setattr(settings, "AGENT_REVIEW_ON_SUBMIT", True)
-    monkeypatch.setattr(expenses_module, "run_ai_review", _BrokenTask())
-    monkeypatch.setattr(expenses_module, "run_review_in_background", _fake_bg)
+    monkeypatch.setattr(expenses_module, "_ensure_review_queue", _boom)
 
     headers = register_and_login(client, "exp_celery2")
     resp = client.post("/api/expenses", json=EXPENSE_PAYLOAD, headers=headers)
     expense_id = resp.json()["id"]
     resp = client.post(f"/api/expenses/{expense_id}/submit", headers=headers)
-    assert resp.status_code == 200, resp.text
-    assert fell_back == [expense_id]
+    assert resp.status_code == 503
+    expense = db_session.get(Expense, expense_id)
+    assert expense.status == ExpenseStatus.DRAFT
+
+
+def test_ensure_review_queue_probes_broker(monkeypatch):
+    """探活逻辑：broker连接失败→503；成功→放行（无DB依赖）"""
+    import pytest
+    from fastapi import HTTPException
+
+    from app.api.endpoints import expenses as expenses_module
+
+    class _BadConn:
+        def connect(self):
+            raise ConnectionError("redis down")
+
+        def close(self):
+            pass
+
+    class _FakeCelery:
+        def connection(self):
+            return _BadConn()
+
+    monkeypatch.setattr(expenses_module, "celery_app", _FakeCelery())
+    with pytest.raises(HTTPException) as ei:
+        expenses_module._ensure_review_queue()
+    assert ei.value.status_code == 503
+
+    class _OkConn(_BadConn):
+        def connect(self):
+            pass
+
+    monkeypatch.setattr(
+        expenses_module, "celery_app", type("C", (), {"connection": lambda self: _OkConn()})()
+    )
+    assert expenses_module._ensure_review_queue() is None

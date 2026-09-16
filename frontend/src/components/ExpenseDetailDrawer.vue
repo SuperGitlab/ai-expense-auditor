@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// 报销单详情抽屉：基本信息 + 明细 + AI审核结果 + 审批时间线
+// 报销单详情抽屉：基本信息 + 明细 + AI审核流程画布 + AI审核结果 + 审批时间线
 import { computed, ref, watch } from 'vue'
 import { getApprovalHistory } from '@/api/approval'
 import { getExpense } from '@/api/expense'
+import WorkflowCanvas from '@/components/WorkflowCanvas.vue'
 import {
   AI_DECISION_MAP,
   EXPENSE_TYPE_MAP,
@@ -18,6 +19,9 @@ const emit = defineEmits<{ (e: 'update:visible', v: boolean): void }>()
 const loading = ref(false)
 const expense = ref<Expense | null>(null)
 const history = ref<ApprovalRecord[]>([])
+
+// 「AI 审核流程」折叠区：AI执行中/待人工处理的单据默认展开
+const activeSections = ref<string[]>([])
 
 const drawerVisible = computed({
   get: () => props.visible,
@@ -96,9 +100,18 @@ async function load(expenseId: number) {
     ])
     expense.value = exp
     history.value = hist.items
+    // 进行中状态（AI执行中/待初审/待终审）默认展开画布，终态默认收起
+    activeSections.value = ['submitted', 'pending', 'manager_approved'].includes(exp.status)
+      ? ['wf']
+      : []
   } finally {
     loading.value = false
   }
+}
+
+// 画布里人工接管成功后刷新单据状态/审批时间线/AI结果
+function refresh() {
+  if (props.expenseId) load(props.expenseId)
 }
 
 // 打开时按expenseId加载（同一抽屉可切换不同单据）
@@ -199,6 +212,20 @@ function formatTime(t: string | null | undefined): string {
             </template>
           </el-table-column>
         </el-table>
+
+        <!-- AI 审核流程（节点画布 + 人工接管） -->
+        <el-collapse v-model="activeSections" class="section wf-collapse">
+          <el-collapse-item name="wf">
+            <template #title>
+              <span class="wf-collapse-title">AI 审核流程</span>
+              <span
+                v-if="['submitted'].includes(expense.status)"
+                class="wf-live-dot"
+              >AI 执行中</span>
+            </template>
+            <WorkflowCanvas v-if="expense.id" :expense-id="expense.id" @decided="refresh" />
+          </el-collapse-item>
+        </el-collapse>
 
         <!-- AI 审核结果 -->
         <div class="section-title">AI 审核结果</div>
@@ -318,6 +345,25 @@ function formatTime(t: string | null | undefined): string {
   font-weight: 600;
   margin: 18px 0 10px;
   color: #303133;
+}
+
+/* AI 审核流程折叠区 */
+.wf-collapse {
+  margin-top: 18px;
+
+  .wf-collapse-title {
+    font-weight: 600;
+    color: #303133;
+  }
+
+  .wf-live-dot {
+    margin-left: 8px;
+    padding: 1px 8px;
+    font-size: 11px;
+    color: #409eff;
+    background: #ecf5ff;
+    border-radius: 10px;
+  }
 }
 
 .risk-row {

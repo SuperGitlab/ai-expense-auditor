@@ -20,3 +20,13 @@ export function decideApproval(
 ): Promise<PendingExpense> {
   return request.post('/approvals/decide', { expense_id: expenseId, action, comment })
 }
+
+// 人工接管（人审优先）：AI执行中/待初审/待终审的单据可随时直接裁决，
+// AI之后算出的结论只留档不生效；驳回必须填写意见
+export function takeoverDecision(
+  expenseId: number,
+  action: 'approve' | 'reject',
+  comment?: string,
+): Promise<PendingExpense> {
+  return request.post('/approvals/takeover', { expense_id: expenseId, action, comment })
+}

@@ -3,6 +3,13 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
 
+// 自定义请求配置：轮询类请求置 true 可跳过统一错误弹窗（避免闪断刷屏）
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    skipErrorMessage?: boolean
+  }
+}
+
 // AI审核走真实LLM调用，耗时较长，超时放宽到3分钟
 const request = axios.create({
   baseURL: '/api', // 后端路由本身带 /api 前缀，vite代理直接透传
@@ -56,7 +63,7 @@ request.interceptors.response.use(
         // 登录页本身的401 = 用户名或密码错误
         ElMessage.error(message || '用户名或密码错误')
       }
-    } else {
+    } else if (!error.config?.skipErrorMessage) {
       ElMessage.error(message)
     }
     return Promise.reject(error)

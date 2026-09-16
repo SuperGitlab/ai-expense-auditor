@@ -2,10 +2,9 @@
 报销接口
 报销单CRUD、提交、取消
 """
-import logging
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import CurrentUser, DBSession, require_roles
 from app.config import settings
@@ -14,11 +13,31 @@ from app.models import (Expense, ExpenseStatus, ExpenseType, User,
 from app.schemas.expense import (ExpenseCreate, ExpenseListResponse,
                                  ExpenseResponse, ExpenseUpdate)
 from app.services import expense_service
+from app.tasks import celery_app
 from app.tasks.review import run_ai_review
 
 router = APIRouter(prefix="/api/expenses", tags=["报销管理"])
 
-logger = logging.getLogger(__name__)
+
+def _ensure_review_queue() -> None:
+    """提交前探活AI审核队列（broker=Redis）。
+
+    不可用直接503、单据保持草稿——不降级为进程内执行（用户明确要求显式报错）。
+    只探broker可达；worker未启动时任务暂存Redis等消费，不算错误。
+    """
+    conn = celery_app.connection()
+    try:
+        conn.connect()
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI审核队列不可用：请先启动 Redis 与 Celery worker 后再提交（{type(e).__name__}）",
+        )
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # @router.post("", response_model=ExpenseResponse, status_code=status.HTTP_201_CREATED)
@@ -87,52 +106,25 @@ def delete_expense(expense_id: int, db: DBSession, current_user: CurrentUser):
     expense_service.delete_expense(db, expense_id, current_user)
 
 
-async def run_review_in_background(expense_id: int) -> None:
-    """
-    进程内AI审核兜底（BackgroundTasks：响应发出后才跑）。
-    正常路径走Celery任务app.tasks.review.run_ai_review；broker不可用时降级到这里。
-    必须自开session——请求里的db随请求结束已关闭，传进来必炸
-    """
-    from app.agents.workflow import workflow as review_workflow
-    from app.database import SessionLocal
-
-    db = SessionLocal()
-    try:
-        await review_workflow.run(db, expense_id)
-    except Exception as e:
-        # AI审核失败：保守转人工，单据留在PENDING状态，不影响提交本身
-        logger = logging.getLogger(__name__)
-        logger.error(f"后台AI审核失败（转人工）: {e}")
-        db.rollback()
-        expense = db.query(Expense).filter(Expense.id == expense_id).first()
-        if expense:
-            expense.status = ExpenseStatus.PENDING
-            db.commit()
-    finally:
-        db.close()
-
-
 @router.post("/{expense_id}/submit", response_model=ExpenseResponse)
 async def submit_expense(
     expense_id: int,
-    background_tasks: BackgroundTasks,
     db: DBSession,
     current_user: CurrentUser,
 ):
     """
     提交报销单进入审核流程（立即返回）
-    AI审核放后台任务跑：串在请求里要等3次LLM调用（约2-3分钟），前端会一直转圈。
+    AI审核放Celery worker跑：串在请求里要等3次LLM调用（约2-3分钟），前端会一直转圈。
     响应返回时单据状态为SUBMITTED，后台审核完成后流转为approved/rejected/pending。
+    队列不可用时提交直接503（单据保持草稿），不做进程内降级。
     """
+    if settings.AGENT_REVIEW_ON_SUBMIT:
+        _ensure_review_queue()  # 探活放提交动作前：失败则单据原样留在草稿
+
     expense = expense_service.submit_expense(db, expense_id, current_user)
 
     if settings.AGENT_REVIEW_ON_SUBMIT:
-        try:
-            run_ai_review.delay(expense_id)  # Celery队列：削峰/持久化/多worker
-        except Exception as e:
-            # broker不可用（本地没起Redis等）：降级回进程内后台执行，提交不受影响
-            logger.warning(f"任务队列不可用，降级为进程内AI审核: {e}")
-            background_tasks.add_task(run_review_in_background, expense_id)
+        run_ai_review.delay(expense_id)  # Celery队列：削峰/持久化/多worker
 
     return expense
 
