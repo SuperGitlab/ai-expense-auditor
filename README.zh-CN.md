@@ -112,4 +112,5 @@ uv run pytest -m llm -v         # LLM 真实联调用例（需 GLM_API_KEY + 测
 | 🔗 多级审批流 | ✅ 已完成 | 固定两级链：经理初审（本部门）→ 财务终审；新增 `manager_approved` 状态、`approvals.step` 层级留痕、审批中心分待初审/待终审、admin 越级直批兜底、无经理部门自动跳过初审 |
 | 🐳 容器化部署 | ✅ 已完成 | `docker compose up -d --build` 一条命令起全栈（PostgreSQL/Redis/backend/nginx 前端 + 一次性 init 建库种子账户）；uploads/Chroma/日志全落卷；`--profile knowledge` 可选知识库初始化；见 `.env.docker.example` |
 | 📥 规则/制度批量导入 | ✅ 已完成 | 规则管理页「导入规则」：① JSON 直导（与 Rule 表字段对齐，类别用 category_code；全量校验、逐行中文报错、有错全拒、原子写入，不碰 Chroma）② 制度文档 docx/pdf 智能导入（解析→LLM 抽取规则草稿带原文依据→人工预览编辑→确认写入 Rule 表 + 原文切块入 Chroma；追加 / 替换两模式，替换仅清 policies 制度库、绝不动 similar_cases 案例库） |
-| 🧪 测试覆盖 | ✅ 已完成 | 159 个 pytest 用例：认证 / 报销单 / 两级审批链 / 通知 / 上传 / OCR流水线 / 用户 / 规则 / 类别 / 报表 / AI审核接口 / 规则导入（JSON直导 + 文档抽取）全覆盖；DB 不可达时自动跳过 |
+| 🗂️ 费用类别管理 | ✅ 已完成 | admin「类别管理」页：增/改/停用/删除；code 唯一且创建后不可改；删除自动停用并解绑绑定规则，被历史明细引用时转停用不物理删除；新增类别自动进入明细下拉 / 规则绑定 / 规则导入（OCR 关键词识别仍限六个内置类别，新类别手选） |
+| 🧪 测试覆盖 | ✅ 已完成 | 163 个 pytest 用例：认证 / 报销单 / 两级审批链 / 通知 / 上传 / OCR流水线 / 用户 / 规则 / 类别 / 报表 / AI审核接口 / 规则导入（JSON直导 + 文档抽取）全覆盖；DB 不可达时自动跳过 |

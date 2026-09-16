@@ -31,6 +31,7 @@ export interface Category {
   code: string
   max_amount: number | null
   description: string | null
+  is_active?: boolean // 仅管理页（include_inactive）返回
 }
 
 // ========== 报销单 ==========

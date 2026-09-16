@@ -62,6 +62,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '规则管理', roles: ['admin'] },
       },
       {
+        path: 'categories',
+        name: 'categories',
+        component: () => import('@/views/CategoryManagementView.vue'),
+        meta: { title: '类别管理', roles: ['admin'] },
+      },
+      {
         path: 'users',
         name: 'users',
         component: () => import('@/views/UserManagementView.vue'),
