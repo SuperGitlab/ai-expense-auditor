@@ -232,7 +232,7 @@ onMounted(load)
               <el-input
                 v-model="dialog.form.code"
                 :disabled="!!editingId"
-                placeholder="如：amount_limit_total（唯一）"
+                placeholder="如：MEAL_500（唯一）"
               />
             </el-form-item>
           </el-col>
@@ -288,7 +288,7 @@ onMounted(load)
               />
             </el-form-item>
           </el-col>
-          <el-col :span="6">
+          <el-col :span="12">
             <el-form-item label="严重度">
               <el-select v-model="dialog.form.severity" style="width: 100%">
                 <el-option
@@ -300,19 +300,25 @@ onMounted(load)
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="6">
+          <el-col :span="12">
             <el-form-item label="风险分">
-              <el-input-number v-model="dialog.form.risk_points" :min="0" :max="100" style="width: 100%" />
+              <el-input-number
+                v-model="dialog.form.risk_points"
+                :min="0"
+                :max="100"
+                controls-position="right"
+                style="width: 100%"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="启用">
+              <el-switch v-model="dialog.form.is_active" />
             </el-form-item>
           </el-col>
           <el-col :span="24">
             <el-form-item label="规则说明">
               <el-input v-model="dialog.form.description" type="textarea" :rows="2" placeholder="选填" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="24">
-            <el-form-item label="启用">
-              <el-switch v-model="dialog.form.is_active" />
             </el-form-item>
           </el-col>
         </el-row>
