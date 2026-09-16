@@ -10,6 +10,9 @@ celery_app = Celery(
     "expense_audit",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
+    # worker进程只加载本包，必须显式include任务模块：
+    # 否则任务不注册，收到的消息按unregistered丢弃，单据永远卡SUBMITTED
+    include=["app.tasks.review"],
 )
 celery_app.conf.update(
     result_expires=3600,                       # 任务结果保留1小时（观测用）
