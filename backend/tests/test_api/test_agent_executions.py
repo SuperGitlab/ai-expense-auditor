@@ -94,3 +94,24 @@ def test_executions_missing_expense(client):
     headers = register_and_login(client, "exec_e4")
     resp = client.get("/api/agent/executions/999999", headers=headers)
     assert resp.status_code == 404
+
+
+@requires_db
+def test_executions_exposes_can_retry(client, db_session):
+    """can_retry服务端计算下发：本人+submitted→true；admin+终态→false（画布重跑按钮显隐依据）"""
+    from app.models import Expense, ExpenseStatus
+
+    expense_id, owner = _submitted_expense(client, "exec_e5")
+
+    resp = client.get(f"/api/agent/executions/{expense_id}", headers=owner)
+    assert resp.status_code == 200
+    assert resp.json()["can_retry"] is True
+
+    # 终态单：admin可见但can_retry=false
+    expense = db_session.get(Expense, expense_id)
+    expense.status = ExpenseStatus.APPROVED
+    db_session.commit()
+    admin = register_and_login(client, "exec_admin2", role="admin")
+    resp = client.get(f"/api/agent/executions/{expense_id}", headers=admin)
+    assert resp.status_code == 200
+    assert resp.json()["can_retry"] is False

@@ -4,7 +4,7 @@
 // 3s轮询轨迹接口；审批人可随时人工接管（人审优先：AI结论以人工结果为准）
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getExecutions } from '@/api/agent'
+import { getExecutions, retryExecution } from '@/api/agent'
 import { takeoverDecision } from '@/api/approval'
 import type { AgentNodeExecution, NodeRunStatus } from '@/api/agent'
 import { useUserStore } from '@/stores/user'
@@ -19,6 +19,7 @@ const STAGE_COLUMNS: string[][] = [['document'], ['rule', 'rag'], ['risk'], ['de
 
 const nodes = ref<AgentNodeExecution[]>([])
 const expenseStatus = ref<string | null>(null)
+const canRetryFlag = ref(false)
 const loadFailed = ref(false)
 let timer: number | null = null
 let failCount = 0
@@ -46,6 +47,9 @@ const canTakeover = computed(() => {
 })
 
 const hasRunning = computed(() => nodes.value.some((n) => n.status === 'running'))
+
+// 重跑按钮：服务端算好的 can_retry（本人/finance/admin + SUBMITTED/PENDING）且当前无节点在跑
+const canRetry = computed(() => canRetryFlag.value && !hasRunning.value)
 
 // 状态 → 节点框样式类
 const STATUS_ICON: Record<NodeRunStatus, string> = {
@@ -83,6 +87,7 @@ async function load() {
     const data = await getExecutions(props.expenseId)
     nodes.value = data.nodes
     expenseStatus.value = data.expense_status
+    canRetryFlag.value = data.can_retry
     loadFailed.value = false
     failCount = 0
     maybeStopPolling()
@@ -127,9 +132,35 @@ watch(
   () => {
     nodes.value = []
     expenseStatus.value = null
+    canRetryFlag.value = false
     startPolling()
   },
 )
+
+// ===== 断点恢复重跑 =====
+const retrying = ref(false)
+
+async function doRetry() {
+  try {
+    await ElMessageBox.confirm(
+      '已完成节点将直接复用，仅重跑未完成节点（不重复调用AI）。确认重新执行？',
+      '重新执行AI审核',
+      { confirmButtonText: '确认重跑', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return // 用户取消
+  }
+  retrying.value = true
+  try {
+    await retryExecution(props.expenseId)
+    ElMessage.success('已派发重跑，节点将从未完成处继续')
+    startPolling() // 轨迹恢复变化（轮询可能已停）
+  } catch {
+    // 拦截器已提示（如执行中409、终态400）
+  } finally {
+    retrying.value = false
+  }
+}
 
 // ===== 人工接管（人审优先） =====
 const taking = ref(false)
@@ -231,6 +262,14 @@ async function doTakeover(action: 'approve' | 'reject') {
     <div v-if="hasRunning" class="running-hint">
       <el-icon class="is-loading"><Loading /></el-icon>
       AI 审核执行中…（约2-3分钟，节点完成后逐个点亮）
+    </div>
+
+    <!-- 断点恢复重跑（卡死/失败单的续跑入口） -->
+    <div v-if="canRetry" class="retry-bar">
+      <span class="retry-label">未完成或中断的审核可断点续跑：已完成节点直接复用，不重复调用AI</span>
+      <el-button type="primary" size="small" plain :loading="retrying" @click="doRetry">
+        重新执行
+      </el-button>
     </div>
 
     <!-- 人工接管 -->
@@ -442,6 +481,25 @@ async function doTakeover(action: 'approve' | 'reject') {
       min-width: 200px;
       font-size: 12px;
       color: #b88230;
+    }
+  }
+
+  .retry-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: #ecf5ff;
+    border: 1px dashed #409eff;
+    border-radius: 6px;
+
+    .retry-label {
+      flex: 1;
+      min-width: 200px;
+      font-size: 12px;
+      color: #3375b9;
     }
   }
 }

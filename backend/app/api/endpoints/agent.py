@@ -1,6 +1,6 @@
 """
 AI审核接口
-手动触发AI审核、查询工作流结构、节点执行轨迹
+手动触发AI审核、查询工作流结构、节点执行轨迹、断点恢复重跑
 """
 import logging
 
@@ -8,10 +8,12 @@ from fastapi import APIRouter, HTTPException
 
 from app.agents.workflow import workflow
 from app.api.deps import CurrentUser, DBSession
+from app.api.endpoints.expenses import _ensure_review_queue
 from app.config import settings
 from app.models import AgentNodeRun, ExpenseStatus, UserRole
 from app.schemas.agent import AIReviewRequest, AIReviewResponse
 from app.services.expense_service import get_expense
+from app.tasks.review import run_ai_review
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,7 @@ def get_executions(expense_id: int, db: DBSession, current_user: CurrentUser):
     节点执行轨迹（工作流画布数据源，3s轮询）
     权限同报销单读取：本人 / finance / admin / manager(本部门)
     固定返回5节点全量：未启动的节点补 status=pending，画布结构稳定
+    can_retry：重跑按钮显隐由服务端算好（画布组件拿不到单据归属人）
     """
     expense = get_expense(db, expense_id, current_user)  # 404/403
 
@@ -99,4 +102,42 @@ def get_executions(expense_id: int, db: DBSession, current_user: CurrentUser):
             "detail": run.detail if run else None,
             "error": run.error if run else None,
         })
-    return {"nodes": nodes, "expense_status": expense.status.value}
+    can_retry = (
+        expense.status in (ExpenseStatus.SUBMITTED, ExpenseStatus.PENDING)
+        and (
+            expense.user_id == current_user.id
+            or current_user.role in (UserRole.FINANCE, UserRole.ADMIN)
+        )
+    )
+    return {"nodes": nodes, "expense_status": expense.status.value, "can_retry": can_retry}
+
+
+@router.post("/executions/{expense_id}/retry")
+def retry_review(expense_id: int, db: DBSession, current_user: CurrentUser):
+    """
+    断点恢复重跑（画布「重新执行」按钮）：派发 resume=True 的Celery任务——
+    已成功节点输出直接复用（不重调LLM），仅重跑 failed/未执行节点。
+    权限同手动AI审核：本人 / admin / finance；仅 SUBMITTED/PENDING 可重跑
+    """
+    expense = get_expense(db, expense_id, current_user)  # 404/403
+
+    if current_user.role not in (UserRole.ADMIN, UserRole.FINANCE) and expense.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="只能重跑本人报销单的AI审核")
+
+    if expense.status not in (ExpenseStatus.SUBMITTED, ExpenseStatus.PENDING):
+        raise HTTPException(
+            status_code=400,
+            detail=f"当前状态 {expense.status.value} 不可重跑（仅已提交/待审核状态）",
+        )
+
+    # 正在执行（有running节点）不允许重派，防双跑
+    running = db.query(AgentNodeRun.id).filter(
+        AgentNodeRun.expense_id == expense_id, AgentNodeRun.status == "running"
+    ).first()
+    if running:
+        raise HTTPException(status_code=409, detail="AI审核执行中，请等待完成后再重跑")
+
+    _ensure_review_queue()  # 503：Redis/队列不可用
+    run_ai_review.delay(expense_id, resume=True)
+    logger.info(f"断点恢复重跑已派发 报销单#{expense_id}（操作人 {current_user.username}）")
+    return {"expense_id": expense_id, "dispatched": True, "resume": True}

@@ -1,8 +1,11 @@
 """
-AI审核Celery任务
+AI审核Celery任务 + worker启动自愈扫描（卡死单断点重派）
 """
 import asyncio
 import logging
+from datetime import datetime, timedelta
+
+from celery.signals import worker_ready
 
 from app.tasks import celery_app
 
@@ -37,3 +40,60 @@ def run_ai_review(expense_id: int, resume: bool = False) -> str:
         return f"expense#{expense_id} fallback_to_pending: {e}"
     finally:
         db.close()
+
+
+def find_stuck_expense_ids(db, now: datetime, grace_minutes: int = 15) -> list[int]:
+    """
+    自愈扫描目标：SUBMITTED 且提交超过宽限期、且宽限期内无任何节点进展
+    （无节点行=任务从未被worker执行；节点行全旧=worker中途死掉）。
+    只扫SUBMITTED：PENDING是失败兜底态（已入人工队列），自动重试会造成LLM重试风暴。
+    MySQL DATETIME无时区：now统一转naive再比较。
+    """
+    from app.models import AgentNodeRun, Expense, ExpenseStatus
+
+    now_naive = now.replace(tzinfo=None) if now.tzinfo else now
+    cutoff = now_naive - timedelta(minutes=grace_minutes)
+
+    rows = (
+        db.query(Expense.id)
+        .filter(
+            Expense.status == ExpenseStatus.SUBMITTED,
+            Expense.submitted_at.isnot(None),
+            Expense.submitted_at < cutoff,
+            ~db.query(AgentNodeRun.id)
+            .filter(
+                AgentNodeRun.expense_id == Expense.id,
+                AgentNodeRun.started_at >= cutoff,
+            )
+            .exists(),
+        )
+        .all()
+    )
+    return [row[0] for row in rows]
+
+
+@worker_ready.connect
+def resubmit_stuck_reviews(sender=None, **kwargs):
+    """
+    worker启动自愈：扫描并重派卡死单（resume=True——已完成节点复用输出，秒级通过）。
+    历史bug（任务未注册即被丢弃）留下的死单由此自动恢复；幂等且秒级，重复派发无成本。
+    任何异常只记日志：扫描失败不能阻止worker正常启动干活。
+    """
+    try:
+        from app.database import SessionLocal
+        from app.utils.helpers import utc_now
+
+        db = SessionLocal()
+        try:
+            stuck = find_stuck_expense_ids(db, utc_now())
+        finally:
+            db.close()
+        for expense_id in stuck:
+            try:
+                run_ai_review.delay(expense_id, resume=True)
+            except Exception as e:
+                logger.error(f"worker启动自愈：重派报销单#{expense_id}失败: {e}")
+        if stuck:
+            logger.info(f"worker启动自愈：已重派{len(stuck)}张卡死单 {stuck}")
+    except Exception as e:
+        logger.error(f"worker启动自愈扫描失败（不影响worker运行）: {e}")

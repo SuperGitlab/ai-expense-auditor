@@ -18,10 +18,16 @@ export interface AgentNodeExecution {
 export interface AgentExecutions {
   nodes: AgentNodeExecution[]
   expense_status: ExpenseStatus
+  can_retry: boolean
 }
 
 // 节点执行轨迹（工作流画布数据源，3s轮询）
 // skipErrorMessage：轮询闪断不弹统一错误窗（连续失败由画布自行停轮询提示）
 export function getExecutions(expenseId: number): Promise<AgentExecutions> {
   return request.get(`/agent/executions/${expenseId}`, { skipErrorMessage: true })
+}
+
+// 断点恢复重跑：已成功节点直接复用，仅重跑未完成节点
+export function retryExecution(expenseId: number): Promise<{ expense_id: number; dispatched: boolean; resume: boolean }> {
+  return request.post(`/agent/executions/${expenseId}/retry`)
 }
