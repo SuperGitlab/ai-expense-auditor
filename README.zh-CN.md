@@ -48,41 +48,47 @@
 
 ## 快速开始
 
-### 1. 后端
+### 1. 首次初始化（只跑一次）
 
 ```bash
 # 依赖安装（项目根目录）
 uv sync
+cd frontend && npm install && cd ..   # 前端依赖
 
 # 配置环境变量：复制 backend/.env.example 为根目录 .env 并填写
 # 必填：DATABASE_URL / GLM_API_KEY / JWT_SECRET_KEY / SECRET_KEY
 
-# 初始化数据库（建表 + 4演示账号/6费用类别/8审核规则）
+# 初始化数据库（建表 + 4演示账号/6费用类别/8审核规则；新库走create_all无需迁移）
 cd backend
 uv run python scripts/init_db.py
 
 # 初始化RAG知识库（灌入示例财务制度，需GLM_API_KEY）
 uv run python scripts/init_knowledge.py
 
-# 启动（务必在 backend/ 目录下，数据目录相对CWD落盘）
-uv run uvicorn app.main:app --reload --port 8000
-
-# AI审核worker（另开终端；提交报销单后由它跑审核，Agent日志打在这里）
-# 本地需先启动Redis：docker run -d -p 6379:6379 redis:7
-uv run celery -A app.tasks.celery_app worker --loglevel=info --pool=solo   # Windows必须--pool=solo
-# 提交依赖Redis与本worker：未启动时提交直接返回503明确报错（单据保持草稿，不降级）
-# worker启动时自动扫描重派卡死单（SUBMITTED超15分钟无节点进展，断点续跑不重调已完成的LLM）
+# 旧库升级：已建库的老环境补断点恢复列（幂等，可重复执行）
+uv run python scripts/migrate_v4.py
 ```
 
-启动后访问 Swagger 文档：<http://localhost:8000/api/docs>
+### 2. 日常启动（4 个终端）
 
-### 2. 前端
+MySQL 以服务方式运行中；②③在 `backend/` 目录（数据目录相对CWD落盘），④在 `frontend/` 目录。
 
 ```bash
-cd frontend
-npm install
-npm run dev        # http://localhost:5173（/api 已代理到 8000）
+# ① Redis（Celery队列依赖；容器已存在则 docker start <容器id>）
+docker run -d -p 6379:6379 redis:7
+
+# ② 后端API（Swagger文档 http://localhost:8000/api/docs）
+uv run uvicorn app.main:app --reload --port 8000
+
+# ③ AI审核worker（提交报销单后由它跑审核，Agent日志打在这里；Windows必须--pool=solo）
+uv run celery -A app.tasks.celery_app worker --loglevel=info --pool=solo
+
+# ④ 前端（frontend/ 目录；http://localhost:5173，/api 已代理到 8000）
+npm run dev
 ```
+
+- 提交依赖 Redis 与 worker ③：未启动时提交直接返回 503 明确报错（单据保持草稿，不降级）
+- worker ③ 启动时自动扫描重派卡死单（SUBMITTED 超 15 分钟无节点进展，断点续跑不重调已完成的 LLM）
 
 ### 3. 演示账号（init_db.py 创建）
 

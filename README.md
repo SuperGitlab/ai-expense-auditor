@@ -48,41 +48,47 @@ Submit claim (runs in background; API returns immediately)
 
 ## Quick Start
 
-### 1. Backend
+### 1. First-time Setup (run once)
 
 ```bash
 # Install dependencies (project root)
 uv sync
+cd frontend && npm install && cd ..   # frontend deps
 
 # Configure env: copy backend/.env.example to .env in the project root and fill in
 # Required: DATABASE_URL / GLM_API_KEY / JWT_SECRET_KEY / SECRET_KEY
 
-# Initialize the database (tables + 4 demo accounts / 6 categories / 8 rules)
+# Initialize the database (tables + 4 demo accounts / 6 categories / 8 rules; fresh DBs use create_all, no migration needed)
 cd backend
 uv run python scripts/init_db.py
 
 # Seed the RAG knowledge base (sample finance policies; requires GLM_API_KEY)
 uv run python scripts/init_knowledge.py
 
-# Start the server (must run inside backend/ — data dirs are relative to CWD)
-uv run uvicorn app.main:app --reload --port 8000
-
-# AI review worker (separate terminal; runs reviews after each submit, agent logs land here)
-# Requires a local Redis: docker run -d -p 6379:6379 redis:7
-uv run celery -A app.tasks.celery_app worker --loglevel=info --pool=solo   # Windows requires --pool=solo
-# Submits REQUIRE Redis + this worker: when they are down, submit returns an explicit 503 and the claim stays in draft
-# On startup the worker auto-rescans and re-dispatches stuck claims (SUBMITTED >15min with no node progress; resumed from checkpoints)
+# Legacy DB upgrade: adds the checkpoint-resume column (idempotent, safe to re-run)
+uv run python scripts/migrate_v4.py
 ```
 
-Swagger docs: <http://localhost:8000/api/docs>
+### 2. Daily Startup (4 terminals)
 
-### 2. Frontend
+MySQL runs as a service; run ②③ inside `backend/` (data dirs are relative to CWD), ④ inside `frontend/`.
 
 ```bash
-cd frontend
-npm install
-npm run dev        # http://localhost:5173 (/api is proxied to port 8000)
+# ① Redis (Celery broker; if the container already exists: docker start <id>)
+docker run -d -p 6379:6379 redis:7
+
+# ② Backend API (Swagger docs at http://localhost:8000/api/docs)
+uv run uvicorn app.main:app --reload --port 8000
+
+# ③ AI review worker (runs reviews after each submit, agent logs land here; Windows requires --pool=solo)
+uv run celery -A app.tasks.celery_app worker --loglevel=info --pool=solo
+
+# ④ Frontend (inside frontend/; http://localhost:5173, /api proxied to port 8000)
+npm run dev
 ```
+
+- Submits REQUIRE Redis ① and worker ③: when they are down, submit returns an explicit 503 and the claim stays in draft
+- On startup, worker ③ auto-rescans and re-dispatches stuck claims (SUBMITTED >15min with no node progress; resumed from checkpoints)
 
 ### 3. Demo Accounts (created by init_db.py)
 
