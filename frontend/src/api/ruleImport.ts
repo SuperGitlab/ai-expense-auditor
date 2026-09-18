@@ -28,8 +28,8 @@ export interface RowError {
 export interface ImportResult {
   imported: number
   rules: Rule[]
-  chroma_written: number
-  chroma_available: boolean
+  vector_written: number
+  vector_available: boolean
   cleared_policies: boolean
 }
 

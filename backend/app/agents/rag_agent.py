@@ -8,7 +8,7 @@ from typing import Any, Dict, List  # 类型标注
 from pydantic import BaseModel, Field  # 定义LLM结构化输出的schema（字段名+类型+说明即提示词的一部分）
 
 from app.agents.base_agent import AgentResult, BaseAgent  # 基类：LLM客户端 + structured_chat + 统一返回结构
-from app.rag.retriever import ExpenseRetriever  # 两路检索器（Chroma向量库：制度/案例两个collection）
+from app.rag.retriever import ExpenseRetriever  # 两路检索器（Milvus向量库：制度/案例两个collection）
 
 
 class RAGSummary(BaseModel):
@@ -62,7 +62,7 @@ class RAGAgent(BaseAgent):
         snapshot = input_data["expense"]  # 报销单快照（expense主表 + items明细）
         query = self._build_query(snapshot)  # 组装向量检索查询串
 
-        # 1. 两路检索（Chroma不可用/为空时返回空列表，不抛异常）
+        # 1. 两路检索（向量库不可用/为空时返回空列表，不抛异常）
         # 同一查询串分别查"制度"和"案例"两个collection，各取相似度top3
         policies = self.retriever.retrieve_policies(query, k=3)  # 制度条文 [{content, source, section, distance}]
         cases = self.retriever.retrieve_similar_cases(query, k=3)  # 历史案例 [{content, expense_id, title, status, risk_level, distance}]

@@ -68,7 +68,7 @@ class DraftRuleOut(RuleImportItem):
 class ExtractionDraftResponse(BaseModel):
     """文档抽取响应：草稿+章节由前端暂存，确认时原样回传"""
     filename: str
-    source: str = Field(..., description="Chroma metadata.source（默认=文件名）")
+    source: str = Field(..., description="向量库 metadata.source（默认=文件名）")
     sections: list[SectionOut]
     rules: list[DraftRuleOut]
     stats: dict = Field(default_factory=dict, description="{text_chars, sections, rules, method}")
@@ -83,9 +83,9 @@ class DocumentImportConfirmRequest(BaseModel):
 
 
 class ImportResultResponse(BaseModel):
-    """导入结果（chroma_* 仅文档通道有意义；JSON通道恒0/False）"""
+    """导入结果（vector_* 仅文档通道有意义；JSON通道恒0/False）"""
     imported: int = Field(..., description="写入Rule表行数")
     rules: list[RuleResponse] = Field(default_factory=list)
-    chroma_written: int = Field(0, description="知识库入库块数")
-    chroma_available: bool = Field(False, description="ChromaDB是否可用")
+    vector_written: int = Field(0, description="知识库(Milvus)入库块数")
+    vector_available: bool = Field(False, description="Milvus是否可用")
     cleared_policies: bool = Field(False, description="replace模式是否执行了清空")

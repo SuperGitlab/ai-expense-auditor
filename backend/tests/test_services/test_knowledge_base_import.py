@@ -1,5 +1,5 @@
 """
-KnowledgeBaseManager 制度导入方法测试（Fake store 注入，不碰真实Chroma目录）
+KnowledgeBaseManager 制度导入方法测试（Fake store 注入，不碰真实向量库）
 核心安全断言：replace 模式只清 policies，绝不触碰 similar_cases
 """
 from app.rag.knowledge_base import KnowledgeBaseManager
@@ -22,7 +22,7 @@ class FakeStore:
 
 
 def _manager() -> tuple[KnowledgeBaseManager, FakeStore, FakeStore]:
-    """绕过__init__（不打开真实Chroma），注入两个Fake store"""
+    """绕过__init__（不连真实Milvus），注入两个Fake store"""
     m = KnowledgeBaseManager.__new__(KnowledgeBaseManager)
     m.policies_store = FakeStore()
     m.cases_store = FakeStore()

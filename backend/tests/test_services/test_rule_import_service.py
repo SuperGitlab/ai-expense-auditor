@@ -108,7 +108,7 @@ def test_split_sections_no_heading_fallback():
 
 
 def test_split_sections_preserves_text_verbatim():
-    """每一行原文都在节内逐字保留（保真：进Chroma的不许被改写，标题行进content首行）"""
+    """每一行原文都在节内逐字保留（保真：进向量库的不许被改写，标题行进content首行）"""
     lines = [
         "第一章 总则",
         "本制度适用于全体员工。",

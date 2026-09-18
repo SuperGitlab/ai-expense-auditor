@@ -6,11 +6,11 @@ import logging  # Python内置日志库；logger.info() 打出的信息带模块
 
 import uuid  # 生成全局唯一随机ID（uuid4），给每个知识块当主键用
 
-from datetime import datetime  # 给制度导入块打导入时间戳（Chroma metadata只收标量，存ISO字符串）
+from datetime import datetime  # 给制度导入块打导入时间戳（向量库metadata只收标量，存ISO字符串）
 
 from typing import Optional  # 类型标注工具（本文件当前未实际使用，保留的历史导入）
 
-from app.rag.vectorstore import VectorStore  # 向量库的门面类：内部封装ChromaDB的增/查/计数
+from app.rag.vectorstore import VectorStore  # 向量库的门面类：内部封装Milvus的增/查/计数
 from app.rag.retriever import CASES_COLLECTION, POLICIES_COLLECTION  # 两个"表"（集合）的名字常量
 
 # 以本模块名建logger：日志会显示来自 app.rag.knowledge_base
@@ -50,7 +50,7 @@ class KnowledgeBaseManager:
     """
 
     def __init__(self):
-        # 打开两个向量库"表"（ChromaDB集合，数据落盘在 CHROMA_PERSIST_DIR=./data/chroma）：
+        # 打开两个向量库"表"（Milvus集合，数据在远程standalone实例，地址由 MILVUS_URI 配置）：
         # policies_store —— 制度库：init_knowledge.py 灌的8段制度就存这里
         # cases_store    —— 案例库：AI每审完一单，把该报销单摘要回填进来，越用越厚
         self.policies_store = VectorStore(POLICIES_COLLECTION)
@@ -76,7 +76,7 @@ class KnowledgeBaseManager:
             docs: [{content, source?, section?}]
         Returns: 入库块数
         """
-        # ChromaDB的add接口要求三个"平行列表"：第i块文本对应第i个元数据、第i个ID
+        # 向量库写入接口要求三个"平行列表"：第i块文本对应第i个元数据、第i个ID
         texts, metadatas, ids = [], [], []
         for doc in docs:  # 逐篇处理传入的制度文档（init_knowledge.py传了8篇）
             content = doc.get("content", "")  # 取正文；没写content键则当空串（切出来是[]，等于跳过）
@@ -94,7 +94,7 @@ class KnowledgeBaseManager:
                 ids.append(f"policy-{uuid.uuid4().hex[:12]}")
         if not texts:  # 传入的文档全是空的 → 没有任何块要入库
             return 0
-        # 真正入库：VectorStore内部先调GLM embedding把每块文本变向量，再连同元数据/ID写入ChromaDB
+        # 真正入库：VectorStore内部先调GLM embedding把每块文本变向量，再连同元数据/ID写入Milvus
         added = self.policies_store.add_documents(texts, metadatas, ids)
         logger.info(f"财务制度入库：{added} 块")
         return added  # 返回块数（注意≠篇数：超500字的长文档会被切成多块）
@@ -119,13 +119,13 @@ class KnowledgeBaseManager:
 
         Args:
             sections: [{title, content}]（split_sections的产出）
-            source: 文档来源名（Chroma metadata.source）
+            source: 文档来源名（向量库 metadata.source）
             replace: True=先清空policies再写入（新版制度整体生效语义）
         Returns: (入库块数, 是否执行了清空)
         """
         cleared = self.clear_policies() if replace else False
         # 附加元数据：doc_id标识本次导入批次（为将来按文档定向删除埋点），
-        # imported_at记录导入时间（Chroma metadata只收标量，存ISO字符串）
+        # imported_at记录导入时间（向量库metadata只收标量，存ISO字符串）
         extra = {
             "doc_id": uuid.uuid4().hex[:12],
             "imported_at": datetime.now().isoformat(timespec="seconds"),

@@ -129,15 +129,15 @@ async function handleConfirm(mode: 'append' | 'replace') {
         .map(({ selected: _selected, ...rule }) => rule),
       sections: draftMeta.value.sections,
     })
-    if (res.imported || res.chroma_written) {
+    if (res.imported || res.vector_written) {
       ElMessage.success(
-        `成功导入 ${res.imported} 条规则${res.cleared_policies ? '，已清空旧制度库' : ''}，知识库写入 ${res.chroma_written} 块`,
+        `成功导入 ${res.imported} 条规则${res.cleared_policies ? '，已清空旧制度库' : ''}，知识库写入 ${res.vector_written} 块`,
       )
     } else {
       ElMessage.warning('未导入任何内容（0条规则、知识库写入0块）')
     }
-    if (!res.chroma_available) {
-      ElMessage.warning('知识库（ChromaDB）当前不可用：规则已保存，制度原文未入库，恢复后可重新导入')
+    if (!res.vector_available) {
+      ElMessage.warning('知识库（Milvus）当前不可用：规则已保存，制度原文未入库，恢复后可重新导入')
     }
     emit('imported')
     visible.value = false

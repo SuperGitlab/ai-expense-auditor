@@ -1,6 +1,6 @@
 """
 知识库初始化脚本
-灌入示例公司财务制度到ChromaDB（幂等：已有数据跳过）
+灌入示例公司财务制度到Milvus（幂等：已有数据跳过）
 
 用法（在 backend/ 目录下）:
     uv run python scripts/init_knowledge.py

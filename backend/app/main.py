@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
         logger.warning(f"数据库连接失败（请检查MySQL是否启动）: {e}")
 
     # 知识库加载校验：启动时打印制度/案例库存量统计（复用workflow的模块级单例）；
-    # ChromaDB不可用时count返回-1、此处异常仅告警，均不阻塞启动
+    # Milvus不可用时count返回-1、此处异常仅告警，均不阻塞启动
     try:
         from app.agents.workflow import knowledge_base
         knowledge_base.load_knowledge_bases()

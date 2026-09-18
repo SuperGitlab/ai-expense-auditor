@@ -107,7 +107,7 @@ def split_sections(text: str, fallback_title: str = "正文") -> list[dict]:
     制度原文按标题行切章节
 
     无任何标题时整篇作一节（标题取fallback_title，通常为文件名）。
-    非标题行原文逐字保留——进Chroma的制度文本不允许被改写（保真），
+    非标题行原文逐字保留——进向量库的制度文本不允许被改写（保真），
     所以章节划分用正则启发式而非让LLM转述。
     """
     sections: list[dict] = []
@@ -305,7 +305,7 @@ def write_rules(db: Session, items: list[RuleImportItem], category_map: dict[str
 
 
 def import_json_rules(db: Session, raw_rows: list[dict]) -> list[Rule]:
-    """JSON直导编排：全量校验有错全拒，否则批量入库（不碰Chroma）"""
+    """JSON直导编排：全量校验有错全拒，否则批量入库（不碰向量库）"""
     existing_codes, category_map = load_import_context(db)
     parsed, row_errors = validate_rule_rows(raw_rows, existing_codes, category_map)
     errors = [

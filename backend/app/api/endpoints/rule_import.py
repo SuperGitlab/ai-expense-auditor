@@ -1,6 +1,6 @@
 """
 规则导入接口（admin）
-JSON直导（全量校验有错全拒，只写MySQL）+ 制度文档抽取草稿 + 确认入库（Rule表+Chroma）
+JSON直导（全量校验有错全拒，只写MySQL）+ 制度文档抽取草稿 + 确认入库（Rule表+Milvus向量库）
 """
 import logging
 import tempfile
@@ -52,7 +52,7 @@ def _row_errors_response(errors: list[RuleImportRowError]) -> JSONResponse:
 
 @router.post("/json", response_model=ImportResultResponse)
 def import_rules_json(payload: RuleImportJsonRequest, db: DBSession, current_user: AdminUser):
-    """JSON全量导入：任一行校验失败或code重复则整体拒绝；不碰Chroma"""
+    """JSON全量导入：任一行校验失败或code重复则整体拒绝；不碰向量库"""
     try:
         rules = svc.import_json_rules(db, payload.rules)
     except svc.ImportValidationError as e:
@@ -60,8 +60,8 @@ def import_rules_json(payload: RuleImportJsonRequest, db: DBSession, current_use
     return ImportResultResponse(
         imported=len(rules),
         rules=rules,
-        chroma_written=0,
-        chroma_available=is_available(),
+        vector_written=0,
+        vector_available=is_available(),
         cleared_policies=False,
     )
 
@@ -123,10 +123,10 @@ def extract_document(file: UploadFile, db: DBSession, current_user: AdminUser):
 def confirm_document(
     payload: DocumentImportConfirmRequest, db: DBSession, current_user: AdminUser
 ):
-    """确认草稿入库：全量校验（有错全拒，Chroma不碰）→ Rule表 → Chroma(append/replace)
+    """确认草稿入库：全量校验（有错全拒，向量库不碰）→ Rule表 → Milvus(append/replace)
 
     rules可为空=仅导入制度原文入知识库；MySQL先落（规则是主数据），
-    Chroma后落且失败不回滚（知识库可重新导入补齐）。
+    向量库后落且失败不回滚（知识库可重新导入补齐）。
     """
     total_chars = sum(len(s.content) for s in payload.sections)
     if total_chars > MAX_SECTIONS_CHARS:
@@ -165,7 +165,7 @@ def confirm_document(
     return ImportResultResponse(
         imported=len(rules),
         rules=rules,
-        chroma_written=added,
-        chroma_available=is_available(),
+        vector_written=added,
+        vector_available=is_available(),
         cleared_policies=cleared,
     )

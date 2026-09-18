@@ -1,70 +1,72 @@
 """
 向量存储模块
-直接封装chromadb客户端（不引入langchain-chroma，减少依赖）
+直接封装pymilvus的MilvusClient（不引入langchain-milvus，减少依赖）
 
 注意：
-- 持久化路径绝对化，避免不同CWD启动产生两套库
-- get_or_create_collection不传默认embedding_function（避免chromadb下载onnx模型），
-  向量由调用方（embeddings模块）显式计算后传入
+- Milvus是独立服务（standalone部署，地址由MILVUS_URI配置），不再依赖本地目录——
+  顺带消除了旧版backend/worker两进程共享嵌入式sqlite目录的并发写隐患
+- 集合schema：id主键 + text原文 + vector向量（dim与GLM embedding一致），
+  其余metadata走动态字段（enable_dynamic_field），无需逐个声明
+- 分数语义换算：Milvus COSINE分数越大越相似，本模块统一换算成
+  distance = 1 - score（越小越相似），保持对上层（retriever/agent）的既有契约
 """
 import logging  # 标准日志：出错时logger.error记录，调用方拿到None/空结果自行降级
-from pathlib import Path  # 面向对象的路径操作（.resolve()把相对路径转绝对路径）
-from typing import Any, Optional  # 类型标注：Any=任意类型，Optional[X]=X或None
+from typing import Optional  # 类型标注：Optional[X]=X或None
 
-import chromadb  # 向量数据库本体（嵌入式，无需独立服务，数据落本地目录）
-from chromadb.config import Settings as ChromaSettings  # chromadb的配置类（改名避免和本项目Settings混淆）
+from pymilvus import DataType, MilvusClient  # Milvus官方SDK（MilvusClient=新版统一入口）
 
-from app.config import settings  # 本项目配置（当前未直接用，保留）
+from app.config import settings  # 本项目配置（MILVUS_URI、EMBEDDING_DIMENSIONS）
 from app.rag.embeddings import get_embeddings  # embedding工厂：文本→1024维向量（调GLM接口）
 
 # 以本模块名建logger，日志能定位到来源文件
 logger = logging.getLogger(__name__)
 
-# 持久化目录绝对化：
-# 本文件在 backend/app/rag/vectorstore.py，向上三级回到 backend/，
-# 拼上 data/chroma → 无论从哪个工作目录启动，库都固定落在 backend/data/chroma，
-# 避免"相对路径随CWD漂移，产生两套库"的经典坑（.env里的CHROMA_PERSIST_DIR实际未用）
-CHROMA_DIR = (Path(__file__).resolve().parent.parent.parent / "data" / "chroma").resolve()
-
-# chromadb客户端的单例缓存：None表示还没创建过
-_client: Optional[chromadb.ClientAPI] = None
+# Milvus客户端的单例缓存：None表示还没创建过
+_client: Optional[MilvusClient] = None
 
 
-def get_client() -> Optional[chromadb.ClientAPI]:
-    """获取chromadb持久化客户端（单例；失败返回None由调用方降级）"""
+def get_client() -> Optional[MilvusClient]:
+    """获取Milvus客户端（单例；连接失败返回None由调用方降级）"""
     # global声明：本函数要修改模块级的_client变量（Python里函数内赋值默认是局部变量）
     global _client
-    if _client is None:  # 第一次调用才真正初始化（懒加载，和数据库engine一个思路）
+    if _client is None:  # 第一次调用才真正连接（懒加载，和数据库engine一个思路）
         try:
-            CHROMA_DIR.mkdir(parents=True, exist_ok=True)  # 目录不存在就建（parents=True连父目录一起建）
-            _client = chromadb.PersistentClient(  # "持久化"客户端：数据自动落盘到path，重启不丢
-                path=str(CHROMA_DIR),  # 落盘位置
-                settings=ChromaSettings(anonymized_telemetry=False),  # 关闭匿名遥测（不往chroma官方发数据）
-            )
-        except Exception as e:  # 初始化失败不抛异常炸掉整个应用
-            logger.error(f"ChromaDB初始化失败: {e}")
+            _client = MilvusClient(uri=settings.MILVUS_URI)  # 构造时即建连，失败抛异常
+        except Exception as e:  # 连不上不炸应用（比如Milvus机器没开机）
+            logger.error(f"Milvus连接失败（{settings.MILVUS_URI}）: {e}")
             return None  # 返回None，调用方据此降级（比如知识库不可用就跳过RAG检索）
     return _client  # 第二次起直接返回缓存的那一个客户端（全项目共用）
 
 
-def get_collection(name: str, create: bool = True) -> Optional[Any]:
+def get_collection(name: str, create: bool = True) -> Optional[str]:
     """
-    获取集合（cosine相似度；不传embedding_function，向量显式计算）
-    （"集合"≈关系库里的"表"；不存在的名字就顺手创建）
+    确保集合存在并返回集合名（cosine相似度HNSW索引；向量显式计算）
+    MilvusClient按名字直接操作集合（不像chromadb返回collection对象），
+    返回名字只为保持"None=服务不可用"的既有判断约定
     """
     client = get_client()  # 先拿客户端
-    if client is None:  # 客户端都起不来（ChromaDB不可用）
+    if client is None:  # 客户端都连不上（Milvus不可用）
         return None
     try:
-        # get_or_create：有这个集合就用，没有就建——天然幂等，重复调用无副作用
-        return client.get_or_create_collection(
-            name=name,
-            # 相似度算法用余弦距离（衡量向量夹角，与向量长度无关，适合文本语义比较）
-            # chromadb默认是欧氏距离（L2），这里显式改成cosine
-            metadata={"hnsw:space": "cosine"},
-            # 故意不传embedding_function：chromadb默认会下载一个本地onnx模型来算向量，
-            # 本项目统一用GLM的embedding-3（在embeddings模块），所以向量全由调用方算好再传入
-        )
+        if not client.has_collection(name):  # 不存在才建——天然幂等，重复调用无副作用
+            if not create:  # 显式不许建（当前无调用方用到，保留参数兼容签名）
+                return None
+            # 显式schema：主键+原文+向量三字段，auto_id=False（沿用chromadb时代的自定义字符串ID）
+            schema = MilvusClient.create_schema(auto_id=False, enable_dynamic_field=True)
+            schema.add_field("id", DataType.VARCHAR, is_primary=True, max_length=128)
+            schema.add_field("vector", DataType.FLOAT_VECTOR, dim=settings.EMBEDDING_DIMENSIONS)
+            schema.add_field("text", DataType.VARCHAR, max_length=65535)
+            # 向量索引：HNSW图索引 + COSINE度量（与旧Chroma的hnsw:space=cosine对齐）
+            index_params = MilvusClient.prepare_index_params()
+            index_params.add_index(
+                field_name="vector",
+                index_type="HNSW",
+                metric_type="COSINE",  # 文本语义比较看夹角不看模长
+                params={"M": 16, "efConstruction": 200},  # 常规参数：召回/建索引速度折中
+            )
+            # 建集合并自动加载（建了索引即可搜，无需再手动load）
+            client.create_collection(collection_name=name, schema=schema, index_params=index_params)
+        return name
     except Exception as e:
         logger.error(f"获取集合 {name} 失败: {e}")
         return None
@@ -82,83 +84,93 @@ class VectorStore:
 
     def add_documents(self, texts: list[str], metadatas: list[dict], ids: list[str]) -> int:
         """
-        文档批量入库（文本→向量→chromadb）
+        文档批量入库（文本→向量→Milvus）
         Returns: 成功入库条数（失败返回0）
         """
-        collection = get_collection(self.collection_name)  # 打开集合
-        if collection is None or not texts:  # 库不可用 / 没有文本要入 → 0条
-            return 0
+        client = get_client()  # 先拿客户端与集合
+        if client is None or get_collection(self.collection_name) is None or not texts:
+            return 0  # 库不可用 / 没有文本要入 → 0条
         try:
             # 先把所有文本批量算成向量（一次API调用传一批，比逐条调省网络开销）
             vectors = self.embeddings.embed_documents(texts)
-            collection.add(  # 真正写入：三个列表按下标一一对应
-                embeddings=vectors,  # 向量（检索时比对这个）
-                documents=texts,  # 原文（命中后返回给人看的就是它）
-                metadatas=metadatas,  # 标签（来源/章节，可按条件过滤）
-                ids=ids,  # 主键（重复ID会报错，所以入库方生成了uuid）
-            )
+            # 每行一个dict：三字段显式给值，metadata拍平进动态字段（不能叫id/text/vector）
+            rows = [
+                {"id": rid, "vector": vec, "text": text, **(meta or {})}
+                for rid, vec, text, meta in zip(ids, vectors, texts, metadatas)
+            ]
+            client.insert(collection_name=self.collection_name, data=rows)
             return len(texts)  # 返回入库条数
-        except Exception as e:  # 任何一步失败（网络/接口/写盘）都不炸应用
+        except Exception as e:  # 任何一步失败（网络/embedding接口/Milvus写）都不炸应用
             logger.error(f"[{self.collection_name}] 文档入库失败: {e}")
             return 0
 
     def query(self, text: str, k: int = 3) -> list[dict]:
         """
         相似度查询
-        Returns: [{document, metadata, distance}]；不可用/为空时返回[]
+        Returns: [{document, metadata, distance}]；不可用时返回[]
+        （distance越小越相似——由Milvus COSINE分数换算而来，语义与旧Chroma版一致）
         """
-        collection = get_collection(self.collection_name)  # 打开集合
-        if collection is None:  # 库不可用
-            return []
+        client = get_client()  # 先拿客户端与集合
+        if client is None or get_collection(self.collection_name) is None:
+            return []  # 库不可用
         try:
-            if collection.count() == 0:  # 空库查询没意义（也省一次embedding调用费）
-                return []
-            vector = self.embeddings.embed_query(text)  # 把查询句也变成向量（和入库用同一个模型，向量空间才一致）
-            result = collection.query(  # 向量近邻搜索（内部走HNSW索引，不是逐条遍历）
-                query_embeddings=[vector],  # 注意是列表：chromadb支持一次查多句，这里只查一句
-                n_results=min(k, collection.count()),  # 要几条结果（库里不足k条就要count条，防报错）
-                include=["documents", "metadatas", "distances"],  # 结果里带原文/标签/距离
+            vector = self.embeddings.embed_query(text)  # 查询句变向量（与入库同模型，向量空间才一致）
+            results = client.search(  # 向量近邻搜索（内部走HNSW索引，不是逐条遍历）
+                collection_name=self.collection_name,
+                data=[vector],  # 列表：支持一次查多句，这里只查一句
+                limit=k,  # 要几条结果（库里不足k条自动少给，不会报错）
+                output_fields=["*"],  # text + 全部动态metadata字段都带回来
             )
-            docs = result.get("documents") or [[]]  # chromadb返回的结构是"列表的列表"，取不到给个空壳防崩
-            metas = result.get("metadatas") or [[]]
-            dists = result.get("distances") or [[]]
-            # 三个平行列表zip成一个个字典，调用方好处理：{document, metadata, distance}
-            # distance是余弦距离：越小越相似（0=方向一致）
+            hits = results[0] if results else []  # 取第一句查询的结果（结构是"列表的列表"）
             return [
                 {
-                    "document": doc,
-                    "metadata": meta or {},
-                    "distance": dist,
+                    "document": (hit.get("entity") or {}).get("text", ""),
+                    # metadata=除text外的全部动态字段（source/section/expense_id等）
+                    "metadata": {key: value for key, value in (hit.get("entity") or {}).items()
+                                 if key != "text"},
+                    # Milvus COSINE的distance字段其实是相似度分数（越大越相似），
+                    # 换算成余弦距离：1 - score，保持"越小越相似"的对外契约
+                    "distance": 1 - (hit.get("distance") or 0.0),
                 }
-                for doc, meta, dist in zip(docs[0], metas[0], dists[0])
+                for hit in hits
             ]
         except Exception as e:
             logger.error(f"[{self.collection_name}] 查询失败: {e}")
             return []
 
     def count(self) -> int:
-        """集合内文档数（不可用返回-1）"""
-        collection = get_collection(self.collection_name)
-        if collection is None:
+        """集合内文档数（不可用返回-1；Milvus统计为近似值，仅展示用）"""
+        client = get_client()
+        if client is None or get_collection(self.collection_name) is None:
             return -1  # 约定-1表示"库不可用"，区别于0（库可用但为空）
         try:
-            return collection.count()
+            stats = client.get_collection_stats(self.collection_name)
+            return int(stats.get("row_count", 0))
         except Exception:
             return -1
 
     def reset(self) -> bool:
         """清空集合（开发调试用）"""
-        client = get_client()  # 注意：删集合要拿client（集合级操作挂在client上）
+        client = get_client()  # 注意：删集合是client级操作
         if client is None:
             return False
         try:
-            # 删的是整个集合（≈DROP TABLE），不是逐条删——比一条条删快得多
-            client.delete_collection(self.collection_name)
+            # 删的是整个集合（≈DROP TABLE），不是逐条删——比一条条删快得多；
+            # 下次get_collection/add时会按schema自动重建
+            client.drop_collection(self.collection_name)
             return True
         except Exception:
             return False
 
 
 def is_available() -> bool:
-    """ChromaDB是否可用"""
-    return get_client() is not None  # 能拿到客户端就是可用（None=初始化失败）
+    """Milvus是否可用（连接成功且能应答一次真实请求）"""
+    client = get_client()
+    if client is None:
+        return False  # 连接都没建立（None=初始化失败）
+    try:
+        client.list_collections()  # 发一次真实请求探活（不是只看连接对象存在）
+        return True
+    except Exception as e:
+        logger.error(f"Milvus探活失败: {e}")
+        return False

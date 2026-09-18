@@ -1,6 +1,6 @@
 """
 JSON直导接口测试（需测试DB）
-语义：全量校验有错全拒（400逐行明细）、合法批量入库、不碰Chroma
+语义：全量校验有错全拒（400逐行明细）、合法批量入库、不碰向量库
 """
 from tests.conftest import register_and_login, requires_db
 
@@ -55,7 +55,7 @@ def test_import_json_happy_path(client, db_session):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["imported"] == 2
-    assert body["chroma_written"] == 0
+    assert body["vector_written"] == 0
     codes = {r["code"] for r in body["rules"]}
     assert codes == {"IMP_1", "IMP_2"}
 
@@ -122,7 +122,7 @@ def test_import_json_empty_rejected(client):
 
 
 @requires_db
-def test_import_json_never_touches_chroma(client, monkeypatch):
+def test_import_json_never_touches_knowledge_base(client, monkeypatch):
     """JSON通道不碰知识库"""
     from app.api.endpoints import rule_import as rim
 

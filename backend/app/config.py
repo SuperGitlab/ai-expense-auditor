@@ -64,9 +64,8 @@ class Settings(BaseSettings):
     RISK_HIGH_MIN: int = 70  # 风险分高于此值视为高风险（强制人工审批）
     EMBEDDING_DIMENSIONS: int = 1024  # embedding-3支持的向量维度(256/512/1024/2048)
 
-    # 向量数据库配置
-    CHROMA_PERSIST_DIR: str = "./data/chroma"
-    CHROMA_COLLECTION: str = "expense_knowledge"
+    # 向量数据库配置（Milvus独立服务，地址指向已部署的standalone实例）
+    MILVUS_URI: str = "http://localhost:19530"
 
     # 文件存储配置
     UPLOAD_DIR: str = "./uploads"

@@ -1,6 +1,6 @@
 """
 制度文档导入接口测试（需测试DB）
-抽取端点（解析/LLM均打桩）+ 确认端点（Rule入库 + Chroma append/replace两模式）
+抽取端点（解析/LLM均打桩）+ 确认端点（Rule入库 + 向量库 append/replace两模式）
 """
 from app.services.rule_import_service import ExtractedRule, ExtractedRules
 
@@ -200,7 +200,7 @@ def test_confirm_replace(client, monkeypatch):
 
 
 @requires_db
-def test_confirm_invalid_row_no_chroma(client, monkeypatch):
+def test_confirm_invalid_row_no_knowledge_base(client, monkeypatch):
     """确认含坏行：400全拒，知识库零调用、DB零写入"""
     from app.api.endpoints import rule_import as rim
 
