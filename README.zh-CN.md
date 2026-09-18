@@ -12,7 +12,7 @@
 - 🤖 **AI 审核工作流**：提交后自动触发，LangGraph 编排 5 个 Agent（单据解析 → 规则校验 ∥ RAG 检索 → 风险评估 → 终审裁决）
   - `auto_approve` 低风险自动通过 / `auto_reject` 硬性违规自动驳回 / `manual_review` 转人工
   - 风险分 = max(LLM 评分, 规则引擎确定性计分)，等级阈值由代码判定
-- 📚 **RAG 知识库**：ChromaDB 向量库 + GLM embedding，检索「公司制度」与「历史相似案例」；每次审核自动回填案例（数据飞轮）
+- 📚 **RAG 知识库**：Milvus 向量库（远程standalone服务）+ GLM embedding，检索「公司制度」与「历史相似案例」；每次审核自动回填案例（数据飞轮）
 - ✅ **人工审批中心**：manager 限本部门、finance/admin 审全部，审批历史与 AI 审核共用同一时间线
 - 💰 **财务打款登记**：approved → paid，真实转账在系统外完成
 - 📏 **规则管理**：可视化维护审核规则（金额/发票/日期/重复发票），三级严重度 BLOCK / REVIEW / WARN；支持批量导入（JSON 直导 + 制度文档智能抽取）
@@ -24,7 +24,7 @@
 | 层 | 技术 |
 |---|---|
 | 后端 | Python 3.12 · FastAPI · SQLAlchemy 2.0 · MySQL（可切 PostgreSQL）· Redis（可选） |
-| AI | LangGraph · LangChain · GLM（glm-5.1 对话 + embedding-3 向量）· ChromaDB |
+| AI | LangGraph · LangChain · GLM（glm-5.1 对话 + embedding-3 向量）· Milvus（远程向量库） |
 | 前端 | Vue 3 · TypeScript · Vite · Element Plus · Pinia · vue-router |
 | 工程 | uv（依赖管理）· pytest · docker-compose（本地 PostgreSQL/Redis 辅助服务） |
 
@@ -57,12 +57,14 @@ cd frontend && npm install && cd ..   # 前端依赖
 
 # 配置环境变量：复制 backend/.env.example 为根目录 .env 并填写
 # 必填：DATABASE_URL / GLM_API_KEY / JWT_SECRET_KEY / SECRET_KEY
+# 向量库（Milvus）：RAG需要一个可达的 Milvus 实例——连已有远程 standalone，
+#   或参照官方文档本机起 standalone compose；.env 里配 MILVUS_URI=http://<host>:19530
 
 # 初始化数据库（建表 + 4演示账号/6费用类别/8审核规则；新库走create_all无需迁移）
 cd backend
 uv run python scripts/init_db.py
 
-# 初始化RAG知识库（灌入示例财务制度，需GLM_API_KEY）
+# 初始化RAG知识库（灌入示例财务制度到Milvus，需GLM_API_KEY）
 uv run python scripts/init_knowledge.py
 
 # 旧库升级：已建库的老环境补断点恢复列（幂等，可重复执行）
@@ -118,8 +120,8 @@ uv run pytest -m llm -v         # LLM 真实联调用例（需 GLM_API_KEY + 测
 | 📤 报表导出 | ✅ 已完成 | `GET /api/reports/export` 返回4-sheet xlsx（总览/趋势/分类/明细）；finance/admin |
 | 👥 用户管理页面 | ✅ 已完成 | `/users` admin页面：改角色/启停，禁止操作自己 |
 | 🔗 多级审批流 | ✅ 已完成 | 固定两级链：经理初审（本部门）→ 财务终审；新增 `manager_approved` 状态、`approvals.step` 层级留痕、审批中心分待初审/待终审、admin 越级直批兜底、无经理部门自动跳过初审 |
-| 🐳 容器化部署 | ✅ 已完成 | `docker compose up -d --build` 一条命令起全栈（PostgreSQL/Redis/backend/nginx 前端 + 一次性 init 建库种子账户）；uploads/Chroma/日志全落卷；`--profile knowledge` 可选知识库初始化；见 `.env.docker.example` |
-| 📥 规则/制度批量导入 | ✅ 已完成 | 规则管理页「导入规则」：① JSON 直导（与 Rule 表字段对齐，类别用 category_code；全量校验、逐行中文报错、有错全拒、原子写入，不碰 Chroma）② 制度文档 docx/pdf 智能导入（解析→LLM 抽取规则草稿带原文依据→人工预览编辑→确认写入 Rule 表 + 原文切块入 Chroma；追加 / 替换两模式，替换仅清 policies 制度库、绝不动 similar_cases 案例库） |
+| 🐳 容器化部署 | ✅ 已完成 | `docker compose up -d --build` 一条命令起全栈（PostgreSQL/Redis/backend/nginx 前端 + 一次性 init 建库种子账户）；uploads/日志全落卷，向量库为外部远程 Milvus（`MILVUS_URI`）；`--profile knowledge` 可选知识库初始化；见 `.env.docker.example` |
+| 📥 规则/制度批量导入 | ✅ 已完成 | 规则管理页「导入规则」：① JSON 直导（与 Rule 表字段对齐，类别用 category_code；全量校验、逐行中文报错、有错全拒、原子写入，不碰向量库）② 制度文档 docx/pdf 智能导入（解析→LLM 抽取规则草稿带原文依据→人工预览编辑→确认写入 Rule 表 + 原文切块入 Milvus；追加 / 替换两模式，替换仅清 policies 制度库、绝不动 similar_cases 案例库） |
 | 🗂️ 费用类别管理 | ✅ 已完成 | admin「类别管理」页：增/改/停用/删除；code 唯一且创建后不可改；删除自动停用并解绑绑定规则，被历史明细引用时转停用不物理删除；新增类别自动进入明细下拉 / 规则绑定 / 规则导入（OCR 关键词识别仍限六个内置类别，新类别手选） |
 | 🖥️ 工作流画布 + 人工接管 + 断点恢复 | ✅ 已完成 | `GET /api/agent/executions/{id}` 提供逐节点轨迹（running/succeeded/failed/overridden，`_traced` 包装器 upsert 进 `agent_node_runs` 表）+ `can_retry` 显隐标记；详情抽屉自绘画布 3 秒轮询；`POST /api/approvals/takeover` 允许经理（限本部门）/财务/管理员对 SUBMITTED/PENDING/MANAGER_APPROVED 任意时刻裁决（财务/管理员对前两态批准直达终审，流水留痕 `[财务越级直批]`/`[管理员越级直批]`）——工作流落库段行锁守卫保证人审终局（AI 结论仅存 `ai_review` 流水留档、决策节点标记「人审结果优先」）；驳回必须填意见；**断点恢复**：成功节点输出存 `agent_node_runs.output_json`（TEXT，60KB 守卫），`POST /api/agent/executions/{id}/retry` 派发 resume=True 续跑（本人/admin/finance，执行中 409 防双跑），已成功节点注入 state 跳过不重调 LLM、画布保留原时间戳；worker_ready 信号启动自愈扫描（SUBMITTED 超 15 分钟宽限且无近期节点进展即重派，顺带恢复落库段崩溃的单据）；Redis/Celery 未启动时提交 503 快速失败（无进程内降级） |
 | 🧪 测试覆盖 | ✅ 已完成 | 214 个 pytest 用例：认证 / 报销单 / 两级审批链 / 通知 / 上传 / OCR流水线 / 用户 / 规则 / 类别 / 报表 / AI审核接口 / 规则导入（JSON直导 + 文档抽取）/ 节点埋点与人审优先竞态 / 断点恢复（checkpoint 注入·跳过·续跑落库）/ 重跑接口 / worker自愈扫描 / Celery任务注册 全覆盖；DB 不可达时自动跳过 |

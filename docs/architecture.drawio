@@ -136,7 +136,7 @@
         <mxCell id="d2" value="Redis&lt;br&gt;Celery broker+backend&lt;br&gt;报表缓存(可选)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">
           <mxGeometry x="490" y="1095" width="200" height="95" as="geometry" />
         </mxCell>
-        <mxCell id="d3" value="ChromaDB 向量库&lt;br&gt;policies 制度库&lt;br&gt;similar_cases 案例库" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">
+        <mxCell id="d3" value="远程 Milvus 向量库 :19530&lt;br&gt;policies 制度库&lt;br&gt;similar_cases 案例库" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">
           <mxGeometry x="730" y="1095" width="210" height="95" as="geometry" />
         </mxCell>
         <mxCell id="d4" value="文件落盘 uploads/yyyy/mm/&lt;br&gt;发票原件(pdf/jpg/png/docx)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">

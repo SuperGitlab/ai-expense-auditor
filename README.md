@@ -12,7 +12,7 @@ AI handles the clear-cut claims (auto-approve / auto-reject) so humans can focus
 - 🤖 **AI review workflow**: triggered automatically on submit; LangGraph orchestrates 5 agents (Document → Rule ∥ RAG → Risk → Decision)
   - `auto_approve` low-risk auto-approve / `auto_reject` hard-violation auto-reject / `manual_review` escalate to human
   - Risk score = max(LLM score, deterministic rule score); risk levels are decided by code thresholds
-- 📚 **RAG knowledge base**: ChromaDB + GLM embeddings, retrieving both company policies and similar historical cases; every review is written back as a new case (data flywheel)
+- 📚 **RAG knowledge base**: Milvus (remote standalone) + GLM embeddings, retrieving both company policies and similar historical cases; every review is written back as a new case (data flywheel)
 - ✅ **Human approval center**: manager sees own department, finance/admin see all; AI reviews and human approvals share one timeline
 - 💰 **Payment registration**: approved → paid (the actual bank transfer happens outside the system)
 - 📏 **Rule management**: maintain review rules (amount / invoice / date / duplicate invoice) with three severity levels: BLOCK / REVIEW / WARN; bulk import via JSON or policy-document extraction
@@ -24,7 +24,7 @@ AI handles the clear-cut claims (auto-approve / auto-reject) so humans can focus
 | Layer | Technologies |
 |---|---|
 | Backend | Python 3.12 · FastAPI · SQLAlchemy 2.0 · MySQL (PostgreSQL optional) · Redis (optional) |
-| AI | LangGraph · LangChain · GLM (glm-5.1 chat + embedding-3 vectors) · ChromaDB |
+| AI | LangGraph · LangChain · GLM (glm-5.1 chat + embedding-3 vectors) · Milvus (remote vector store) |
 | Frontend | Vue 3 · TypeScript · Vite · Element Plus · Pinia · vue-router |
 | Tooling | uv (deps) · pytest · docker-compose (local PostgreSQL/Redis helpers) |
 
@@ -57,12 +57,15 @@ cd frontend && npm install && cd ..   # frontend deps
 
 # Configure env: copy backend/.env.example to .env in the project root and fill in
 # Required: DATABASE_URL / GLM_API_KEY / JWT_SECRET_KEY / SECRET_KEY
+# Vector store (Milvus): RAG needs a reachable Milvus instance — point at an existing
+#   remote standalone, or start one locally via the official standalone compose;
+#   set MILVUS_URI=http://<host>:19530 in .env
 
 # Initialize the database (tables + 4 demo accounts / 6 categories / 8 rules; fresh DBs use create_all, no migration needed)
 cd backend
 uv run python scripts/init_db.py
 
-# Seed the RAG knowledge base (sample finance policies; requires GLM_API_KEY)
+# Seed the RAG knowledge base into Milvus (sample finance policies; requires GLM_API_KEY)
 uv run python scripts/init_knowledge.py
 
 # Legacy DB upgrade: adds the checkpoint-resume column (idempotent, safe to re-run)
@@ -118,8 +121,8 @@ Not yet implemented or half-done — contributions welcome:
 | 📤 Report export | ✅ Done | `GET /api/reports/export` returns a 4-sheet xlsx (summary / trends / by-category / details); finance/admin |
 | 👥 User management UI | ✅ Done | `/users` page for admin: role change + enable/disable, self-modification blocked |
 | 🔗 Multi-level approval | ✅ Done | Fixed two-level chain: manager first review (own department) → finance final approval; new `manager_approved` status, `approvals.step` audit trail, approval center split into first/final queues, admin override, auto-skip when no manager in department |
-| 🐳 Containerized deploy | ✅ Done | `docker compose up -d --build` starts the full stack (PostgreSQL/Redis/backend/nginx frontend + one-shot init & seed accounts); uploads/Chroma/logs persisted in volumes; optional `--profile knowledge` init; see `.env.docker.example` |
-| 📥 Rule & policy bulk import | ✅ Done | "Import" on the rule-management page: ① JSON direct import (fields mirror the Rule table, categories referenced by `category_code`; full validation with per-row errors, all-or-nothing atomic write, never touches Chroma) ② Policy-document import for docx/pdf (parse → LLM extracts rule drafts with verbatim quotes → human preview/edit → confirm: rules into MySQL + verbatim sections chunked into Chroma; append / replace modes, replace clears only the policies store and never touches similar_cases) |
+| 🐳 Containerized deploy | ✅ Done | `docker compose up -d --build` starts the full stack (PostgreSQL/Redis/backend/nginx frontend + one-shot init & seed accounts); uploads/logs persisted in volumes, vector store is an external remote Milvus (`MILVUS_URI`); optional `--profile knowledge` init; see `.env.docker.example` |
+| 📥 Rule & policy bulk import | ✅ Done | "Import" on the rule-management page: ① JSON direct import (fields mirror the Rule table, categories referenced by `category_code`; full validation with per-row errors, all-or-nothing atomic write, never touches the vector store) ② Policy-document import for docx/pdf (parse → LLM extracts rule drafts with verbatim quotes → human preview/edit → confirm: rules into MySQL + verbatim sections chunked into Milvus; append / replace modes, replace clears only the policies store and never touches similar_cases) |
 | 🗂️ Expense-category management | ✅ Done | Admin "Categories" page: create / edit / disable / delete; code is unique and immutable after creation; deleting a category auto-disables and unbinds its rules, and falls back to disable-only (no physical delete) when historical expense items reference it; new categories appear automatically in item dropdowns, rule bindings and rule imports (OCR keyword mapping still covers the six built-in categories — new ones are manual-select) |
 | 🖥️ Workflow canvas & human takeover & checkpoint resume | ✅ Done | `GET /api/agent/executions/{id}` serves per-node runs (running/succeeded/failed/overridden, upserted by `_traced` wrappers into `agent_node_runs`) plus a `can_retry` flag; self-drawn canvas in the detail drawer polls every 3s; `POST /api/approvals/takeover` lets manager (own dept) / finance / admin rule on SUBMITTED/PENDING/MANAGER_APPROVED anytime (finance/admin approving the first two states goes straight to final, logged as `[finance override]`/`[admin override]`) — row-lock guard in the workflow's persist step keeps the human verdict final (AI result archived as an `ai_review` record, decision node marked "human-first"); rejects require a comment; **checkpoint resume**: succeeded outputs stored in `agent_node_runs.output_json` (TEXT, 60KB guard), `POST /api/agent/executions/{id}/retry` dispatches resume=True (owner/admin/finance; 409 while running to prevent double dispatch) — succeeded nodes are injected into state and skipped without re-calling the LLM, canvas keeps original timestamps; a worker_ready signal self-heals stuck claims on startup (SUBMITTED past a 15-min grace with no recent node progress; also recovers claims whose persist step crashed); submit fails fast with 503 when Redis/Celery are down (no in-process fallback) |
 | 🧪 Test coverage | ✅ Done | 214 pytest cases: auth / expenses / two-level approval chain / notifications / uploads / OCR pipeline / users / rules / categories / reports / agent endpoints / rule import (JSON + document extraction) / node tracing & human-priority race / checkpoint resume (injection · skip · re-run landing) / retry endpoint / worker self-heal sweep / Celery task registration; DB-gated tests auto-skip when unreachable |
