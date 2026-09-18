@@ -1,6 +1,7 @@
 # Docker编排：数据库 + 缓存 + 后端 + 前端 + 一次性初始化
 # 首次：docker compose up -d --build
 # 带知识库初始化（需GLM key）：docker compose --profile knowledge up
+# 向量库Milvus为外部服务：后端/worker/灌库经 MILVUS_URI 连远程实例（默认192.168.1.13:19530，.env.docker可覆盖）
 services:
   db:
     image: postgres:16-alpine
@@ -49,6 +50,7 @@ services:
       MODEL_NAME: ${MODEL_NAME:-glm-5.1}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
       OCR_PROVIDER: ${OCR_PROVIDER:-hybrid}
+      MILVUS_URI: ${MILVUS_URI:-http://192.168.1.13:19530}
     ports:
       - "8000:8000"
     volumes:
@@ -87,9 +89,11 @@ services:
       GLM_API_BASE: ${GLM_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
       MODEL_NAME: ${MODEL_NAME:-glm-5.1}
       OCR_PROVIDER: ${OCR_PROVIDER:-hybrid}
+      MILVUS_URI: ${MILVUS_URI:-http://192.168.1.13:19530}
     command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info"]
     volumes:
-      # 与backend共享：OCR读发票文件(uploads)、RAG检索与知识库回填(data/chroma)
+      # 与backend共享：OCR读发票文件(uploads)、data数据目录
+      # （RAG向量库已外置远程Milvus，data卷不再承担向量存储）
       - uploads:/app/backend/uploads
       - appdata:/app/backend/data
     depends_on:
@@ -139,6 +143,7 @@ services:
       GLM_API_BASE: ${GLM_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
       MODEL_NAME: ${MODEL_NAME:-glm-5.1}
       EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-embedding-3}
+      MILVUS_URI: ${MILVUS_URI:-http://192.168.1.13:19530}
     command: ["python", "scripts/init_knowledge.py"]
     depends_on:
       db:
