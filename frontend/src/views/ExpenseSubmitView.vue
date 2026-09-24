@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 提交/编辑报销单：基础信息 + 动态明细行，保存后可选立即提交（触发AI审核）
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules, UploadRequestOptions } from 'element-plus'
@@ -25,7 +25,7 @@ const categories = ref<Category[]>([])
 
 const form = reactive({
   title: '',
-  expense_type: 'travel' as ExpenseType,
+  expense_type: 'other' as ExpenseType,
   description: '',
   remark: '',
   items: [] as {
@@ -96,6 +96,27 @@ const CAT_NAME_TO_TYPE: Record<string, ExpenseType> = {
   办公用品费: 'office',
   其他费用: 'other',
 }
+
+// 类型↔类别联动：用户未手动选过报销类型时，按第一条带类别的明细自动带出，
+// 避免类型停在误导性默认值上（手动选过即尊重用户，不再推导）
+const typeTouched = ref(false)
+
+function deriveTypeFromItems(): ExpenseType | null {
+  const first = form.items.find((i) => i.category_id)
+  const cat = categories.value.find((c) => c.id === first?.category_id)
+  if (!cat) return null
+  if (EXPENSE_TYPE_MAP[cat.code]) return cat.code as ExpenseType // 种子类别code即类型code
+  return CAT_NAME_TO_TYPE[cat.name] ?? null // 自定义类别按内置名兜底，映射不到则不动
+}
+
+watch(
+  () => form.items.map((i) => i.category_id).join(','),
+  () => {
+    if (typeTouched.value) return
+    const t = deriveTypeFromItems()
+    if (t) form.expense_type = t
+  },
+)
 
 // 应用识别结果到基本信息：标题←费用说明（退化用类别），类型←类别code；只覆盖非空识别值
 function applyOcrToForm(f: OcrFields) {
@@ -236,6 +257,7 @@ onMounted(async () => {
     const exp = await getExpense(editId.value)
     form.title = exp.title
     form.expense_type = exp.expense_type
+    typeTouched.value = true // 已入库的类型视为既定选择，不随明细重新推导
     form.description = exp.description || ''
     form.remark = exp.remark || ''
     form.items = exp.items.map((it) => ({
@@ -268,7 +290,7 @@ onMounted(async () => {
           </el-col>
           <el-col :span="12">
             <el-form-item label="报销类型" prop="expense_type">
-              <el-select v-model="form.expense_type" style="width: 100%">
+              <el-select v-model="form.expense_type" style="width: 100%" @change="typeTouched = true">
                 <el-option
                   v-for="(label, value) in EXPENSE_TYPE_MAP"
                   :key="value"
@@ -276,6 +298,7 @@ onMounted(async () => {
                   :value="value"
                 />
               </el-select>
+              <div class="field-hint">整单性质；未手动选择时按明细的费用类别自动带出</div>
             </el-form-item>
           </el-col>
           <el-col :span="24">
@@ -441,5 +464,11 @@ onMounted(async () => {
   justify-content: center;
   gap: 12px;
   padding: 8px 0 24px;
+}
+
+.field-hint {
+  font-size: 12px;
+  color: #c0c4cc;
+  line-height: 1.4;
 }
 </style>

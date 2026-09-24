@@ -4,10 +4,13 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { createCategory, deleteCategory, listCategories, updateCategory } from '@/api/category'
+import { useClientPagination } from '@/composables/useClientPagination'
 import type { Category } from '@/types'
 
 const loading = ref(false)
 const categories = ref<Category[]>([])
+const { page: catPage, pageSize: catPageSize, paged: pagedCategories } =
+  useClientPagination(categories)
 
 const formRef = ref<FormInstance>()
 const dialogVisible = ref(false)
@@ -131,7 +134,7 @@ onMounted(load)
         class="mb-12"
         title="费用类别用于报销明细行与规则绑定。删除类别会自动停用并解绑其规则；被历史明细引用的类别只停用不物理删除。"
       />
-      <el-table v-loading="loading" :data="categories" stripe>
+      <el-table v-loading="loading" :data="pagedCategories" stripe>
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="name" label="名称" min-width="120" />
         <el-table-column prop="code" label="代码" width="140" />
@@ -153,6 +156,16 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-if="categories.length > catPageSize" class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="catPage"
+          v-model:page-size="catPageSize"
+          :total="categories.length"
+          :page-sizes="[20, 50, 100]"
+          layout="total, sizes, prev, pager, next"
+        />
+      </div>
     </el-card>
 
     <!-- 新建/编辑对话框 -->
@@ -193,5 +206,11 @@ onMounted(load)
 <style scoped lang="scss">
 .mb-12 {
   margin-bottom: 12px;
+}
+
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 </style>

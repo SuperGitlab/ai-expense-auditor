@@ -6,11 +6,14 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { createRule, deleteRule, listRules, updateRule } from '@/api/rule'
 import { listCategories } from '@/api/category'
 import RuleImportDialog from '@/components/RuleImportDialog.vue'
+import { useClientPagination } from '@/composables/useClientPagination'
 import { OPERATOR_MAP, RULE_FIELD_OPTIONS, RULE_TYPE_MAP, SEVERITY_MAP } from '@/constants'
 import type { Category, Rule, RuleOperator, RuleSeverity, RuleType } from '@/types'
 
 const loading = ref(false)
 const rules = ref<Rule[]>([])
+// 规则库全量加载+前端分页（批量导入后可达数百条）
+const { page: rulePage, pageSize: rulePageSize, paged: pagedRules } = useClientPagination(rules)
 const categories = ref<Category[]>([])
 
 const formRef = ref<FormInstance>()
@@ -176,7 +179,7 @@ onMounted(load)
         title="严重度说明：阻断(block)=命中自动驳回；转人工(review)=命中强制人工审批；计分(warn)=命中累计风险分。规则由确定性代码执行，不依赖大模型。"
       />
 
-      <el-table v-loading="loading" :data="rules" stripe>
+      <el-table v-loading="loading" :data="pagedRules" stripe>
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="name" label="规则名称" min-width="150" show-overflow-tooltip />
         <el-table-column prop="code" label="代码" width="170" />
@@ -212,6 +215,16 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-if="rules.length > rulePageSize" class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="rulePage"
+          v-model:page-size="rulePageSize"
+          :total="rules.length"
+          :page-sizes="[20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+        />
+      </div>
     </el-card>
 
     <!-- 新建/编辑对话框 -->
@@ -337,6 +350,12 @@ onMounted(load)
 <style scoped lang="scss">
 .mb-12 {
   margin-bottom: 12px;
+}
+
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 
 .rule-expr {

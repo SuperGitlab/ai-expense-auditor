@@ -6,6 +6,11 @@ export function listPending(): Promise<PendingExpense[]> {
   return request.get('/approvals/pending')
 }
 
+// AI执行中列表（SUBMITTED）：审批中心「AI 审核中」栏数据源
+export function listRunning(): Promise<PendingExpense[]> {
+  return request.get('/approvals/running')
+}
+
 export function getApprovalHistory(expenseId: number): Promise<{
   items: ApprovalRecord[]
   total: number

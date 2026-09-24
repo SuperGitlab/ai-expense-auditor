@@ -15,10 +15,19 @@ export interface AgentNodeExecution {
   error: string | null
 }
 
+// 队列探查（仅 SUBMITTED 且未开跑时返回，其余为 null）：
+// queued=排队中(ahead=前面还有几单，含已被领取的) / executing=已被worker领取未ack /
+// missing=不在队列也未被领取（消息可能丢失） / unknown=探查失败
+export interface QueueStatus {
+  state: 'queued' | 'executing' | 'missing' | 'unknown'
+  ahead?: number
+}
+
 export interface AgentExecutions {
   nodes: AgentNodeExecution[]
   expense_status: ExpenseStatus
   can_retry: boolean
+  queue_status: QueueStatus | null
 }
 
 // 节点执行轨迹（工作流画布数据源，3s轮询）

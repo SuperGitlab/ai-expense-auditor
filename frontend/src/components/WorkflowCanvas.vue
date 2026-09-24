@@ -6,7 +6,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getExecutions, retryExecution } from '@/api/agent'
 import { takeoverDecision } from '@/api/approval'
-import type { AgentNodeExecution, NodeRunStatus } from '@/api/agent'
+import type { AgentNodeExecution, NodeRunStatus, QueueStatus } from '@/api/agent'
 import { useUserStore } from '@/stores/user'
 
 const props = defineProps<{ expenseId: number }>()
@@ -20,6 +20,7 @@ const STAGE_COLUMNS: string[][] = [['document'], ['rule', 'rag'], ['risk'], ['de
 const nodes = ref<AgentNodeExecution[]>([])
 const expenseStatus = ref<string | null>(null)
 const canRetryFlag = ref(false)
+const queueStatus = ref<QueueStatus | null>(null)
 const loadFailed = ref(false)
 let timer: number | null = null
 let failCount = 0
@@ -50,6 +51,28 @@ const hasRunning = computed(() => nodes.value.some((n) => n.status === 'running'
 
 // 重跑按钮：服务端算好的 can_retry（本人/finance/admin + SUBMITTED/PENDING）且当前无节点在跑
 const canRetry = computed(() => canRetryFlag.value && !hasRunning.value)
+
+// 排队可见性：未开跑单据区分"排队中/已领取执行中/任务丢失"（按提交顺序消化，防误判卡死）
+const queueHint = computed(() => {
+  const q = queueStatus.value
+  if (!q || hasRunning.value) return null
+  if (q.state === 'queued')
+    return {
+      type: 'queued',
+      text: `AI 审核排队中：前面还有 ${q.ahead} 单（按提交顺序执行，轮到即自动开始）`,
+    }
+  if (q.state === 'executing')
+    return {
+      type: 'executing',
+      text: '任务已被 worker 领取，正在执行（首个节点轨迹稍候出现）；长时间无进展可点「重新执行」，worker 自愈扫描也会兜底',
+    }
+  if (q.state === 'missing')
+    return {
+      type: 'missing',
+      text: '任务未在队列中（可能随消息服务重启丢失）：可点「重新执行」补发，worker 启动自愈扫描也会兜底重派',
+    }
+  return null // unknown：不显示，避免误导
+})
 
 // 状态 → 节点框样式类
 const STATUS_ICON: Record<NodeRunStatus, string> = {
@@ -88,6 +111,7 @@ async function load() {
     nodes.value = data.nodes
     expenseStatus.value = data.expense_status
     canRetryFlag.value = data.can_retry
+    queueStatus.value = data.queue_status ?? null
     loadFailed.value = false
     failCount = 0
     maybeStopPolling()
@@ -133,6 +157,7 @@ watch(
     nodes.value = []
     expenseStatus.value = null
     canRetryFlag.value = false
+    queueStatus.value = null
     startPolling()
   },
 )
@@ -256,6 +281,16 @@ async function doTakeover(action: 'approve' | 'reject') {
         </div>
         <div v-if="ci < STAGE_COLUMNS.length - 1" class="arrow" />
       </template>
+    </div>
+
+    <!-- 排队可见性提示（未开跑：排队中 / 已领取执行中 / 任务丢失） -->
+    <div v-if="queueHint" :class="['queue-hint', queueHint.type]">
+      <el-icon>
+        <component
+          :is="queueHint.type === 'missing' ? 'WarningFilled' : queueHint.type === 'executing' ? 'VideoPlay' : 'Clock'"
+        />
+      </el-icon>
+      <span>{{ queueHint.text }}</span>
     </div>
 
     <!-- 运行提示 -->
@@ -450,6 +485,26 @@ async function doTakeover(action: 'approve' | 'reject') {
     margin-top: 6px;
     font-size: 12px;
     color: #409eff;
+  }
+
+  .queue-hint {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    font-size: 12px;
+
+    &.queued {
+      color: #3375b9;
+    }
+
+    &.executing {
+      color: #4d8a5f;
+    }
+
+    &.missing {
+      color: #b88230;
+    }
   }
 
   .load-failed {

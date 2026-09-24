@@ -7,6 +7,9 @@
         <mxCell id="title" value="财务报销 AI 审核系统 — 流程架构图" style="text;html=1;fontSize=20;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1">
           <mxGeometry x="40" y="10" width="900" height="30" as="geometry" />
         </mxCell>
+        <mxCell id="subtitle" value="AI 供给拆分：对话/视觉/规则抽取 = Kimi for Coding 云端（K3）· 向量嵌入 = 本机 Ollama qwen3-embedding:8b（4060Ti GPU）· 向量库 = 远程 Milvus（192.168.1.9）" style="text;html=1;fontSize=12;fontColor=#666666;align=left;" vertex="1" parent="1">
+          <mxGeometry x="40" y="38" width="1150" height="22" as="geometry" />
+        </mxCell>
 
         <!-- ============ L1 用户角色层 ============ -->
         <mxCell id="c1" value="用户角色" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontSize=15;fontStyle=1;align=left;spacingLeft=10;spacingTop=6;fillColor=#FFF2CC;strokeColor=#D6B656;" vertex="1" parent="1">
@@ -73,7 +76,7 @@
         <mxCell id="b6" value="通知中心&lt;br&gt;站内信+邮件触发" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#82B366;" vertex="1" parent="1">
           <mxGeometry x="1045" y="470" width="175" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="b7" value="上传 + OCR 混合流水线&lt;br&gt;RapidOCR → 正则KIE(置信度≥0.85) / GLM-VLM兜底 → 业务校验(税号/价税合计)&lt;br&gt;pdf/jpg/png/docx ≤10MB" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#82B366;" vertex="1" parent="1">
+        <mxCell id="b7" value="上传 + OCR 混合流水线&lt;br&gt;RapidOCR → 正则KIE(置信度≥0.85) / K3-VLM兜底(云端多模态) → 业务校验(税号/价税合计)&lt;br&gt;pdf/jpg/png/docx ≤10MB" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#82B366;" vertex="1" parent="1">
           <mxGeometry x="70" y="555" width="340" height="75" as="geometry" />
         </mxCell>
         <mxCell id="b8" value="AI审核接口&lt;br&gt;GET /api/agent/executions/{id} 节点轨迹 + can_retry（画布3s轮询）&lt;br&gt;POST .../retry 断点重跑（resume=True · 409防双跑）" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#82B366;" vertex="1" parent="1">
@@ -81,7 +84,7 @@
         </mxCell>
 
         <!-- ============ L4 异步Agent层 ============ -->
-        <mxCell id="c4" value="Celery Worker（Windows --pool=solo · task_acks_late · prefetch=1）" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontSize=15;fontStyle=1;align=left;spacingLeft=10;spacingTop=6;fillColor=#E1D5E7;strokeColor=#9673A6;" vertex="1" parent="1">
+        <mxCell id="c4" value="Celery Worker（Windows --pool=threads --concurrency=3 · task_acks_late · prefetch=1 · 任务为I/O密集LLM调用）" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontSize=15;fontStyle=1;align=left;spacingLeft=10;spacingTop=6;fillColor=#E1D5E7;strokeColor=#9673A6;" vertex="1" parent="1">
           <mxGeometry x="40" y="720" width="1200" height="250" as="geometry" />
         </mxCell>
         <mxCell id="a1" value="① 单据解析&lt;br&gt;明细/发票核验" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#9673A6;" vertex="1" parent="1">
@@ -90,7 +93,7 @@
         <mxCell id="a2" value="② 规则校验&lt;br&gt;纯代码引擎&lt;br&gt;BLOCK/REVIEW/WARN" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#FFFFFF;strokeColor=#9673A6;" vertex="1" parent="1">
           <mxGeometry x="270" y="765" width="140" height="65" as="geometry" />
         </mxCell>
-        <mxCell id="a3" value="③ RAG检索&lt;br&gt;制度+相似案例" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#FFFFFF;strokeColor=#9673A6;" vertex="1" parent="1">
+        <mxCell id="a3" value="③ RAG检索&lt;br&gt;制度+相似案例&lt;br&gt;(本机嵌入→远程向量库)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#FFFFFF;strokeColor=#9673A6;" vertex="1" parent="1">
           <mxGeometry x="270" y="845" width="140" height="65" as="geometry" />
         </mxCell>
         <mxCell id="a4" value="④ 风险评估&lt;br&gt;0-100分" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#9673A6;" vertex="1" parent="1">
@@ -126,29 +129,32 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
-        <!-- ============ L5 数据层 ============ -->
-        <mxCell id="c5" value="数据层" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontSize=15;fontStyle=1;align=left;spacingLeft=10;spacingTop=6;fillColor=#F8CECC;strokeColor=#B85450;" vertex="1" parent="1">
+        <!-- ============ L5 数据层（本机服务 + 远程向量库） ============ -->
+        <mxCell id="c5" value="数据层（本机服务 + 远程向量库）" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontSize=15;fontStyle=1;align=left;spacingLeft=10;spacingTop=6;fillColor=#F8CECC;strokeColor=#B85450;" vertex="1" parent="1">
           <mxGeometry x="40" y="1040" width="1200" height="180" as="geometry" />
         </mxCell>
-        <mxCell id="d1" value="MySQL 业务库&lt;br&gt;users / expenses / approvals / ai_review&lt;br&gt;agent_node_runs(含 output_json) / rules / notifications" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">
-          <mxGeometry x="70" y="1095" width="380" height="95" as="geometry" />
+        <mxCell id="d1" value="MySQL 业务库（本机）&lt;br&gt;users / expenses / approvals / ai_review&lt;br&gt;agent_node_runs(含 output_json) / rules / notifications" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">
+          <mxGeometry x="70" y="1095" width="300" height="95" as="geometry" />
         </mxCell>
-        <mxCell id="d2" value="Redis&lt;br&gt;Celery broker+backend&lt;br&gt;报表缓存(可选)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">
-          <mxGeometry x="490" y="1095" width="200" height="95" as="geometry" />
+        <mxCell id="d2" value="Redis&lt;br&gt;Celery broker+backend&lt;br&gt;报表缓存(可选)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">
+          <mxGeometry x="390" y="1095" width="160" height="95" as="geometry" />
         </mxCell>
-        <mxCell id="d3" value="远程 Milvus 向量库 :19530&lt;br&gt;policies 制度库&lt;br&gt;similar_cases 案例库" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">
-          <mxGeometry x="730" y="1095" width="210" height="95" as="geometry" />
+        <mxCell id="d5" value="本机 Ollama :11434&lt;br&gt;qwen3-embedding:8b&lt;br&gt;4096维嵌入 · 4060Ti GPU&lt;br&gt;离线免费(OpenAI兼容)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">
+          <mxGeometry x="570" y="1095" width="190" height="95" as="geometry" />
         </mxCell>
-        <mxCell id="d4" value="文件落盘 uploads/yyyy/mm/&lt;br&gt;发票原件(pdf/jpg/png/docx)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">
-          <mxGeometry x="980" y="1095" width="260" height="95" as="geometry" />
+        <mxCell id="d3" value="远程 Milvus :19530&lt;br&gt;(局域网Linux 192.168.1.9)&lt;br&gt;policies 制度库&lt;br&gt;similar_cases 案例库" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">
+          <mxGeometry x="780" y="1095" width="200" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="d4" value="文件落盘 uploads/yyyy/mm/&lt;br&gt;发票原件(pdf/jpg/png/docx)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#FFFFFF;strokeColor=#B85450;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="1095" width="240" height="95" as="geometry" />
         </mxCell>
 
         <!-- ============ 外部服务 ============ -->
         <mxCell id="ext_smtp" value="SMTP 邮件服务" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;fillColor=#F5F5F5;strokeColor=#666666;" vertex="1" parent="1">
           <mxGeometry x="1310" y="470" width="290" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="ext_glm" value="智谱 GLM API&lt;br&gt;glm-5.1 对话&lt;br&gt;embedding-3 向量&lt;br&gt;GLM-VLM 视觉(OCR/KIE)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;fillColor=#F5F5F5;strokeColor=#666666;" vertex="1" parent="1">
-          <mxGeometry x="1310" y="820" width="290" height="130" as="geometry" />
+        <mxCell id="ext_kimi" value="☁ Kimi for Coding 云端订阅&lt;br&gt;api.kimi.com/coding/v1（OpenAI兼容）&lt;br&gt;K3 对话：单据解析 · 风险评估&lt;br&gt;K3 规则抽取：制度文档→规则草稿&lt;br&gt;K3 VLM：OCR图片兜底（原生多模态）&lt;br&gt;thinking-only · reasoning_effort=low" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;fillColor=#F5F5F5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1310" y="760" width="290" height="160" as="geometry" />
         </mxCell>
 
         <!-- ============ 主数据流 ============ -->
@@ -171,7 +177,7 @@
             <Array as="points">
               <mxPoint x="1258" y="620" />
               <mxPoint x="1258" y="1020" />
-              <mxPoint x="610" y="1020" />
+              <mxPoint x="486" y="1020" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -185,30 +191,41 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="e_g" value="⑦ LLM调用（对话/embedding/VLM）" style="html=1;rounded=1;strokeColor=#666666;strokeWidth=2;fontSize=12;fontColor=#333333;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.4;entryX=0;entryY=0.35;endArrow=block;" edge="1" parent="1" source="c4" target="ext_glm">
+        <mxCell id="e_g" value="⑦ LLM调用（Agent对话/风险评估/规则抽取 · K3）" style="html=1;rounded=1;strokeColor=#666666;strokeWidth=2;fontSize=12;fontColor=#333333;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.35;entryX=0;entryY=0.35;endArrow=block;" edge="1" parent="1" source="c4" target="ext_kimi">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_h" value="⑧ RAG检索（embedding）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;strokeColor=#9673A6;strokeWidth=1.5;fontSize=11;fontColor=#5B3A6E;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.75;entryY=0;" edge="1" parent="1" source="a3" target="d3">
+        <mxCell id="e_vlm" value="⑪ OCR VLM图片兜底（web进程 → K3多模态）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;strokeColor=#999999;strokeWidth=1.5;fontSize=11;fontColor=#666666;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.55;entryX=0;entryY=0.15;" edge="1" parent="1" source="c3" target="ext_kimi">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="340" y="1000" />
-              <mxPoint x="887" y="1000" />
+              <mxPoint x="1270" y="557" />
+              <mxPoint x="1270" y="784" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="e_i" value="案例回填（数据飞轮）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;strokeColor=#82B366;strokeWidth=1.5;fontSize=11;fontColor=#2D6A2D;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.95;entryY=0;" edge="1" parent="1" source="a_bf" target="d3">
+        <mxCell id="e_h" value="⑧ 嵌入：查询句→4096维向量（本机GPU）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;strokeColor=#9673A6;strokeWidth=1.5;fontSize=11;fontColor=#5B3A6E;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.3;entryY=0;" edge="1" parent="1" source="a3" target="d5">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="340" y="1010" />
+              <mxPoint x="627" y="1010" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_bf2" value="案例回填文本嵌入（数据飞轮）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;strokeColor=#9673A6;strokeWidth=1.5;fontSize=11;fontColor=#5B3A6E;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.75;entryY=0;" edge="1" parent="1" source="a_bf" target="d5">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="1125" y="1010" />
-              <mxPoint x="930" y="1010" />
+              <mxPoint x="712" y="1010" />
             </Array>
           </mxGeometry>
+        </mxCell>
+        <mxCell id="e_vec" value="向量检索/入库&lt;br&gt;(HNSW·COSINE)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#B85450;strokeWidth=2;fontSize=11;fontColor=#B85450;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="d5" target="d3">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e_k" value="⑩ 自愈重派(resume)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;strokeColor=#9673A6;strokeWidth=1.5;fontSize=11;fontColor=#5B3A6E;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.3;entryY=0;" edge="1" parent="1" source="a_sw" target="d2">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="930" y="988" />
-              <mxPoint x="550" y="988" />
+              <mxPoint x="438" y="988" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -217,7 +234,7 @@
             <Array as="points">
               <mxPoint x="1282" y="592" />
               <mxPoint x="1282" y="1030" />
-              <mxPoint x="650" y="1030" />
+              <mxPoint x="518" y="1030" />
             </Array>
           </mxGeometry>
         </mxCell>

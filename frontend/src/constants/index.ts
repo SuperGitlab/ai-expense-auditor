@@ -1,5 +1,5 @@
 // 全局字典：状态/类型/风险等级的中文标签与标签颜色
-import type { ExpenseType, RuleOperator, RuleSeverity, RuleType } from '@/types'
+import type { RuleOperator, RuleSeverity, RuleType } from '@/types'
 
 // 注意：键放宽为string——模板里经常用后端返回的string状态值索引（如 by_status 遍历），
 // 用Record<ExpenseStatus,...>会触发TS7053隐式any报错

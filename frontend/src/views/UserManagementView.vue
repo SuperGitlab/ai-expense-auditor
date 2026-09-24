@@ -4,11 +4,14 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getUsers, updateUserRole, updateUserStatus } from '@/api/user'
 import { useUserStore } from '@/stores/user'
+import { useClientPagination } from '@/composables/useClientPagination'
 import type { UserInfo, UserRole } from '@/types'
 
 const userStore = useUserStore()
 const loading = ref(true)
 const users = ref<UserInfo[]>([])
+const { page: userPage, pageSize: userPageSize, paged: pagedUsers, reset: resetUserPage } =
+  useClientPagination(users)
 const roleFilter = ref<UserRole | ''>('')
 
 const roleOptions: { value: UserRole; label: string }[] = [
@@ -29,6 +32,12 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+// 筛选变化：换了一组数据，回第1页
+function search() {
+  resetUserPage()
+  load()
 }
 
 // 自己的行：下拉/开关禁用（后端也有双保险）
@@ -73,14 +82,14 @@ onMounted(load)
         placeholder="全部角色"
         clearable
         style="width: 160px"
-        @change="load"
+        @change="search"
       >
         <el-option v-for="r in roleOptions" :key="r.value" :label="r.label" :value="r.value" />
       </el-select>
     </div>
 
     <el-card shadow="never">
-      <el-table v-loading="loading" :data="users" stripe>
+      <el-table v-loading="loading" :data="pagedUsers" stripe>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="username" label="用户名" min-width="120" />
         <el-table-column label="姓名" min-width="100">
@@ -117,6 +126,24 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-if="users.length > userPageSize" class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="userPage"
+          v-model:page-size="userPageSize"
+          :total="users.length"
+          :page-sizes="[20, 50, 100]"
+          layout="total, sizes, prev, pager, next"
+        />
+      </div>
     </el-card>
   </div>
 </template>
+
+<style scoped lang="scss">
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+</style>

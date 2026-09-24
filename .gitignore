@@ -39,5 +39,11 @@ node_modules/
 Thumbs.db
 Desktop.ini
 
+# Claude Code 本地配置（hooks/commands/settings，随个人环境走，勿上传）
+.claude/
+
+# 个人文档（论文/面试笔记/草稿/简历，勿上传）
+docs/
+
 
 my_self/            

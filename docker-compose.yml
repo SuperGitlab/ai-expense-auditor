@@ -1,7 +1,7 @@
 # Docker编排：数据库 + 缓存 + 后端 + 前端 + 一次性初始化
 # 首次：docker compose up -d --build
-# 带知识库初始化（需GLM key）：docker compose --profile knowledge up
-# 向量库Milvus为外部服务：后端/worker/灌库经 MILVUS_URI 连远程实例（默认192.168.1.13:19530，.env.docker可覆盖）
+# 带知识库初始化（需嵌入key，智谱GLM）：docker compose --profile knowledge up
+# 向量库Milvus为外部服务：后端/worker/灌库经 MILVUS_URI 连远程实例（默认192.168.1.9:19530，.env.docker可覆盖）
 services:
   db:
     image: postgres:16-alpine
@@ -45,12 +45,12 @@ services:
       DEBUG: "False"
       SECRET_KEY: ${SECRET_KEY:-change-me-in-env}
       JWT_SECRET_KEY: ${SECRET_KEY:-change-me-in-env}
-      GLM_API_KEY: ${GLM_API_KEY:-}
-      GLM_API_BASE: ${GLM_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
-      MODEL_NAME: ${MODEL_NAME:-glm-5.1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_API_BASE: ${LLM_API_BASE:-https://api.kimi.com/coding/v1}
+      MODEL_NAME: ${MODEL_NAME:-k3}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
       OCR_PROVIDER: ${OCR_PROVIDER:-hybrid}
-      MILVUS_URI: ${MILVUS_URI:-http://192.168.1.13:19530}
+      MILVUS_URI: ${MILVUS_URI:-http://192.168.1.9:19530}
     ports:
       - "8000:8000"
     volumes:
@@ -85,11 +85,11 @@ services:
       DEBUG: "False"
       SECRET_KEY: ${SECRET_KEY:-change-me-in-env}
       JWT_SECRET_KEY: ${SECRET_KEY:-change-me-in-env}
-      GLM_API_KEY: ${GLM_API_KEY:-}
-      GLM_API_BASE: ${GLM_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
-      MODEL_NAME: ${MODEL_NAME:-glm-5.1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_API_BASE: ${LLM_API_BASE:-https://api.kimi.com/coding/v1}
+      MODEL_NAME: ${MODEL_NAME:-k3}
       OCR_PROVIDER: ${OCR_PROVIDER:-hybrid}
-      MILVUS_URI: ${MILVUS_URI:-http://192.168.1.13:19530}
+      MILVUS_URI: ${MILVUS_URI:-http://192.168.1.9:19530}
     command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info"]
     volumes:
       # 与backend共享：OCR读发票文件(uploads)、data数据目录
@@ -123,14 +123,14 @@ services:
     environment:
       DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg2://user:password@db:5432/expense_db}
       REDIS_URL: redis://redis:6379/0
-      GLM_API_KEY: ${GLM_API_KEY:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
     command: ["python", "scripts/init_db.py"]
     depends_on:
       db:
         condition: service_healthy
     restart: "no"
 
-  # 可选：知识库初始化（需GLM key）
+  # 可选：知识库初始化（需智谱GLM嵌入key）
   knowledge-init:
     build:
       context: .
@@ -139,11 +139,11 @@ services:
     environment:
       DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg2://user:password@db:5432/expense_db}
       REDIS_URL: redis://redis:6379/0
-      GLM_API_KEY: ${GLM_API_KEY:-}
-      GLM_API_BASE: ${GLM_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
-      MODEL_NAME: ${MODEL_NAME:-glm-5.1}
-      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-embedding-3}
-      MILVUS_URI: ${MILVUS_URI:-http://192.168.1.13:19530}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_API_BASE: ${EMBEDDING_API_BASE:-http://host.docker.internal:11434/v1}
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-qwen3-embedding:8b}
+      MILVUS_URI: ${MILVUS_URI:-http://192.168.1.9:19530}
     command: ["python", "scripts/init_knowledge.py"]
     depends_on:
       db:
