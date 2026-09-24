@@ -60,10 +60,3 @@ class ExpenseRetriever:
             }
             for r in results
         ]
-
-    def stats(self) -> dict:
-        """知识库统计（诊断用）"""
-        return {
-            "policies": self.policies_store.count(),
-            "similar_cases": self.cases_store.count(),
-        }

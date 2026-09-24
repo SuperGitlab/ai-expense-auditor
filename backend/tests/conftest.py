@@ -23,6 +23,8 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["AGENT_REVIEW_ON_SUBMIT"] = "False"
 # TestClient默认Host为testserver，不在可信主机列表会被TrustedHostMiddleware拦成400，测试前补入
 os.environ["ALLOWED_HOSTS"] = "localhost,127.0.0.1,testserver"
+# 测试会话不写日志文件（app.main import 时会按 LOG_FILE 初始化文件 handler）
+os.environ["LOG_FILE"] = ""
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402

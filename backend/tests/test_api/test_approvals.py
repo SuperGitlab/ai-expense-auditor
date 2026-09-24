@@ -174,3 +174,30 @@ def test_list_pending_scopes(client, db_session):
     finance_headers = register_and_login(client, "ap_fin10", role="finance")
     ids = [e["id"] for e in client.get("/api/approvals/pending", headers=finance_headers).json()]
     assert pending_id in ids and final_id in ids
+
+
+@requires_db
+def test_list_running_scopes(client, db_session):
+    """running列表：SUBMITTED在列、PENDING不在；manager限本部门；employee 403"""
+    running_id, _ = _create_pending(
+        client, db_session, "ap_e11", status=ExpenseStatus.SUBMITTED
+    )
+    pending_id, _ = _create_pending(client, db_session, "ap_e11b")
+
+    finance_headers = register_and_login(client, "ap_fin11", role="finance")
+    ids = [e["id"] for e in client.get("/api/approvals/running", headers=finance_headers).json()]
+    assert running_id in ids and pending_id not in ids
+
+    # manager同默认部门可见，改部门后不可见
+    from app.models import User
+    manager_headers = register_and_login(client, "ap_mgr11", role="manager")
+    ids = [e["id"] for e in client.get("/api/approvals/running", headers=manager_headers).json()]
+    assert running_id in ids
+    manager = db_session.query(User).filter(User.username == "ap_mgr11").first()
+    manager.department = "别的部门"
+    db_session.commit()
+    ids = [e["id"] for e in client.get("/api/approvals/running", headers=manager_headers).json()]
+    assert running_id not in ids
+
+    employee_headers = register_and_login(client, "ap_emp11")
+    assert client.get("/api/approvals/running", headers=employee_headers).status_code == 403

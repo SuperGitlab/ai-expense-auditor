@@ -4,6 +4,7 @@ JSON直导与制度文档导入两通道共用的校验/解析/章节切分/LLM�
 """
 import logging
 import re
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -23,8 +24,13 @@ logger = logging.getLogger(__name__)
 NO_THRESHOLD_OPERATORS = {"exists", "not_exists"}
 # 送入LLM抽取的文本上限（保护上下文与确认回传payload）
 MAX_TEXT_CHARS = 100_000
+# 抽取LLM专属超时：思考模型（K3）思考token计入输出额度，大文档思考+工具调用
+# 容易超过全局5分钟上限（抽取已异步化在Celery任务里跑，无HTTP请求被挂起的问题）
+EXTRACTION_LLM_TIMEOUT_SECONDS = 600
 # PDF文本层低于此长度视为扫描件，降级OCR
 MIN_PDF_TEXT_CHARS = 200
+# 解析出的文档文本低于此长度视为无效（扫描件识别失败）
+MIN_DOC_TEXT_CHARS = 30
 
 
 class ImportValidationError(Exception):
@@ -212,33 +218,70 @@ _EXTRACTION_PROMPT = """你是财务制度规则抽取助手。从制度文本�
 {text}"""
 
 
+def _build_extraction_llm():
+    """抽取用LLM客户端（在Celery后台任务内调用，超时仍有界但比交互式调用宽）
+
+    交互式场景不自动重试（重试把最坏等待翻倍）；抽取任务里的"模型没返回
+    结构化结果"是间歇性截断，由extract_rules_from_text针对性重试一次。
+    max_tokens必须给足：思考模型的思考token计入输出额度，55k字大文档
+    8192额度在思考阶段就烧完，工具调用没发出即被截断（表现为返回None）。
+    """
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        model=settings.MODEL_NAME,
+        api_key=settings.LLM_API_KEY,
+        base_url=settings.LLM_API_BASE,
+        # K3思考模型仅允许temperature=1，不传（默认1）
+        # 输出额度65536≈不设限（k3上限131072；600s超时下实际最多生成约3万token）：
+        # 思考token计入额度，设小了大文档会在思考阶段烧完、工具调用被截断
+        max_tokens=65536,
+        timeout=EXTRACTION_LLM_TIMEOUT_SECONDS,
+        max_retries=0,
+    )
+
+
 def extract_rules_from_text(text: str, category_codes: list[str]) -> ExtractedRules:
     """LLM结构化抽取规则草稿；失败抛LLMExtractionError（端点转502请重试）
 
-    GLM兼容接口不支持response_format，必须走function_calling模式
+    tool_choice显式覆盖为auto：Kimi思考模型拒绝指定函数式强制调用
     （同base_agent._make_structured_llm惯例；service层无需继承BaseAgent）
     """
     from langchain_core.messages import HumanMessage
-    from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(
-        model=settings.MODEL_NAME,
-        api_key=settings.GLM_API_KEY,
-        base_url=settings.GLM_API_BASE,
-        temperature=0,
-        max_tokens=8192,
-    ).with_structured_output(ExtractedRules, method="function_calling")
+    llm = _build_extraction_llm().with_structured_output(
+        ExtractedRules, method="function_calling", tool_choice="auto"
+    )
     prompt = _EXTRACTION_PROMPT.format(
         category_codes=", ".join(category_codes) or "（无）", text=text
     )
-    try:
-        result = llm.invoke([HumanMessage(content=prompt)])
-    except Exception as e:
-        logger.warning(f"制度规则抽取失败: {e}")
-        raise LLMExtractionError(str(e)) from e
-    if not isinstance(result, ExtractedRules):
-        raise LLMExtractionError(f"抽取结果类型异常: {type(result)}")
-    return result
+    logger.info("制度规则抽取开始: 文本%s字, 可用类别%s个", len(text), len(category_codes))
+    logger.info("----------------prompt------------------", prompt)
+    # None重试一次：思考模型大文档偶发"思考烧完输出额度、工具调用被截断"，
+    # 表现为HTTP 200但结构化输出为None（间歇性，同文档重试常能成功）
+    for attempt in (1, 2):
+        started = time.monotonic()
+        try:
+            result = llm.invoke([HumanMessage(content=prompt)])
+        except Exception as e:
+            logger.warning("制度规则抽取失败（第%s次，%.0f秒）: %s", attempt, time.monotonic() - started, e)
+            raise LLMExtractionError(str(e)) from e
+        if isinstance(result, ExtractedRules):
+            logger.info(
+                "制度规则抽取完成: %s条草稿, 第%s次尝试, 用时%.0f秒",
+                len(result.rules), attempt, time.monotonic() - started,
+            )
+            return result
+        retry_note = "，自动重试" if attempt == 1 else ""
+        logger.warning(
+            "制度规则抽取第%s次未返回结构化结果"
+            "（用时%.0f秒，多为思考token耗尽输出额度被截断）%s",
+            attempt, time.monotonic() - started, retry_note,
+        )
+    raise LLMExtractionError(
+        "模型两次均未返回结构化结果（大文档易触发输出截断），请重试；"
+        "若反复失败，请将文档拆分成较小文件分次上传"
+    )
 
 
 def annotate_draft_rows(

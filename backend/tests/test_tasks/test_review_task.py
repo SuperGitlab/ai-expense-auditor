@@ -106,16 +106,23 @@ def test_task_fallback_pending(client, db_session, db_engine, monkeypatch):
 
 @requires_db
 def test_task_failure_keeps_human_decision(client, db_session, db_engine, monkeypatch):
-    """人审优先：人工已把单据流转为REJECTED后任务失败兜底，不再掰成PENDING"""
+    """人审优先：AI执行期间人工已裁决REJECTED，任务失败兜底不再掰成PENDING
+    （起点已裁决的跳过路径见test_task_skips_when_human_decided，此处测执行中竞态）"""
     from app.tasks.review import run_ai_review
 
-    factory = _setup(monkeypatch, db_engine, _FakeWorkflow(exc=RuntimeError("boom")))
+    class _MidRunReject(_FakeWorkflow):
+        """AI跑到一半时人工驳回（状态被并发改掉），随后工作流异常"""
+        async def run(self, db, expense_id, *, resume=False):
+            self.calls.append((expense_id, resume))
+            db.query(Expense).filter(Expense.id == expense_id).update(
+                {"status": ExpenseStatus.REJECTED}
+            )
+            db.commit()
+            raise RuntimeError("boom")
 
-    expense_id = _create_expense(client)
-    with factory() as s:
-        exp = s.query(Expense).filter(Expense.id == expense_id).one()
-        exp.status = ExpenseStatus.REJECTED
-        s.commit()
+    factory = _setup(monkeypatch, db_engine, _MidRunReject())
+
+    expense_id = _create_expense(client)  # 提交时SUBMITTED，起点守卫放行
 
     result = run_ai_review(expense_id)
 
@@ -123,3 +130,34 @@ def test_task_failure_keeps_human_decision(client, db_session, db_engine, monkey
     with factory() as check:
         exp = check.query(Expense).filter(Expense.id == expense_id).one()
         assert exp.status == ExpenseStatus.REJECTED  # 人的裁决不被兜底覆盖
+
+
+@requires_db
+def test_task_skips_when_human_decided(client, db_session, db_engine, monkeypatch):
+    """人审优先（起点守卫）：人工已裁决（状态离开SUBMITTED/PENDING）→任务直接跳过，
+    不跑工作流（不烧LLM）、状态保持人工裁决、残留running节点被补标记为overridden"""
+    from app.models import AgentNodeRun
+    from app.tasks.review import run_ai_review
+    from app.utils.helpers import utc_now
+
+    fake = _FakeWorkflow()
+    factory = _setup(monkeypatch, db_engine, fake)
+
+    expense_id = _create_expense(client)
+    with factory() as s:
+        exp = s.query(Expense).filter(Expense.id == expense_id).one()
+        exp.status = ExpenseStatus.MANAGER_APPROVED  # 模拟人审落定（如接管通过）
+        s.add(AgentNodeRun(expense_id=expense_id, node="rag",
+                           status="running", started_at=utc_now()))
+        s.commit()
+
+    result = run_ai_review(expense_id)
+
+    assert fake.calls == []                       # 工作流根本没跑
+    assert "skipped" in result
+    with factory() as check:
+        exp = check.query(Expense).filter(Expense.id == expense_id).one()
+        assert exp.status == ExpenseStatus.MANAGER_APPROVED
+        rag = check.query(AgentNodeRun).filter_by(
+            expense_id=expense_id, node="rag").one()
+        assert rag.status == "overridden"         # 残留执行中被补标记人审优先

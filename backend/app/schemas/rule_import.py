@@ -74,6 +74,19 @@ class ExtractionDraftResponse(BaseModel):
     stats: dict = Field(default_factory=dict, description="{text_chars, sections, rules, method}")
 
 
+class ExtractionSubmitResponse(BaseModel):
+    """抽取任务提交回执（解析在Celery后台跑，轮询status端点取结果）"""
+    task_id: str = Field(..., description="Celery任务ID")
+    filename: str = Field(..., description="上传文件名（完成通知里引用）")
+
+
+class ExtractionStatusResponse(BaseModel):
+    """抽取任务状态轮询响应"""
+    state: str = Field(..., description="PENDING排队/STARTED执行中/SUCCESS完成/FAILURE失败")
+    draft: Optional[ExtractionDraftResponse] = None
+    error: Optional[str] = None
+
+
 class DocumentImportConfirmRequest(BaseModel):
     """文档导入确认请求（sections必填：rules可为空=仅导入原文入知识库）"""
     source: str = Field(..., min_length=1, max_length=200)

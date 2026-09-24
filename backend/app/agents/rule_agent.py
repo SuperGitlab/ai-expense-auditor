@@ -4,12 +4,15 @@
 LLM仅负责把命中规则翻译成自然语言摘要。
 """
 import json  # 把报销单/命中结果序列化成JSON文本，拼进LLM提示词
+import logging  # 规则引擎日志（脏配置跳过等分支埋点）
 from datetime import date  # 解析ISO格式费用日期，并用date.today()计算"距今N天"
 from decimal import Decimal  # 金额比较用Decimal，避免float精度误差（财务场景必需）
 from typing import Any, Dict  # 类型标注
 
 from app.agents.base_agent import AgentResult, BaseAgent  # 基类：LLM客户端 + 统一的AgentResult返回结构
 from app.models.rule import RuleOperator  # 规则操作符枚举（gt/lt/gte/lte/eq/in/exists/not_exists）
+
+logger = logging.getLogger(__name__)
 
 
 def _field_value(item: dict, field_name: str) -> Any:
@@ -126,7 +129,9 @@ def evaluate_rules(snapshot: dict, rules: list[dict], duplicates: list[dict]) ->
             # 日期限制：threshold为天数，费用日期距今超过N天命中
             try:
                 days = int(float(threshold))  # 阈值转天数（float中转是为了兼容"30.0"这类配置）
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as e:
+                logger.debug("date_limit阈值非法，跳过该规则: code=%s, threshold=%r, err=%s",
+                             code, threshold, e)
                 continue  # 阈值没配/配错：跳过该规则，不让脏配置炸掉引擎
             for it in target_items:  # 逐条明细检查费用日期
                 d = it.get("expense_date")

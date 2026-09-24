@@ -3,8 +3,11 @@
 税号18/20位（统一社会信用代码，数字+大写字母）、不含税+税额=价税合计±0.01、
 日期合法、发票号与手填一致
 """
+import logging
 import re
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # 统一社会信用代码：18或20位，数字+大写英文字母
 _TAX_ID_RE = re.compile(r"[0-9A-Z]{18}|[0-9A-Z]{20}")
@@ -54,6 +57,7 @@ def validate_date(fields: dict) -> list[str]:
             datetime.strptime(raw, fmt)
             return []
         except ValueError:
+            logger.debug("日期格式不匹配，换下一格式重试: date=%s, fmt=%s", raw, fmt)
             continue
     return [f"开票日期格式异常: {raw}"]
 

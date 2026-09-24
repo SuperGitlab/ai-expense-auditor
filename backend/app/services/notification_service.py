@@ -25,7 +25,7 @@ def send_notification(db: Session, user_id: int, title: str, content: str, ntype
         db.add(Notification(user_id=user_id, title=title, content=content, type=ntype))
         db.commit()
     except Exception as e:
-        logger.exception(f"站内信落库失败: {e}")
+        logger.exception("站内信落库失败: user=%s, title=%s, err=%s", user_id, title, e)
         db.rollback()
         return False
 
@@ -34,7 +34,7 @@ def send_notification(db: Session, user_id: int, title: str, content: str, ntype
         if user and user.email:
             notify(user.email, title, content)
     except Exception as e:
-        logger.warning(f"邮件通知失败（不影响主流程）: {e}")
+        logger.warning("邮件通知失败（不影响主流程）: user=%s, err=%s", user_id, e)
     return True
 
 

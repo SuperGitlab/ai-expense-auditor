@@ -79,7 +79,7 @@ def create_expense(db: Session, user: User, data: ExpenseCreate) -> Expense:
         ))
     db.commit()
     db.refresh(expense)
-    logger.info(f"用户 {user.username} 创建报销单 {expense.expense_no} 金额 {total}")
+    logger.info("用户 %s 创建报销单 %s 金额 %s", user.username, expense.expense_no, total)
     return expense
 
 
@@ -221,7 +221,7 @@ def submit_expense(db: Session, expense_id: int, user: User) -> Expense:
     ))
     db.commit()
     db.refresh(expense)
-    logger.info(f"报销单 {expense.expense_no} 已提交")
+    logger.info("报销单 %s 已提交", expense.expense_no)
     return expense
 
 
@@ -258,8 +258,8 @@ def pay_expense(db: Session, expense_id: int, user: User) -> Expense:
     try:
         notify_payment(db, expense)
     except Exception as e:
-        logger.warning(f"打款通知失败（不影响主流程）: {e}")
-    logger.info(f"财务 {user.username} 打款登记 报销单 {expense.expense_no}")
+        logger.warning("打款通知失败（不影响主流程）: 报销单%s, err=%s", expense.expense_no, e)
+    logger.info("财务 %s 打款登记 报销单 %s", user.username, expense.expense_no)
     return expense
 
 

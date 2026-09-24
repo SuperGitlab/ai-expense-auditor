@@ -23,7 +23,8 @@ class DecisionAgent(BaseAgent):
 
     def __init__(self):
         super().__init__(name="决策Agent")
-        # GLM兼容接口不支持response_format，走tool-call模式（基类helper同时记录schema供日志打印）
+        # tool-call模式：嵌套Pydantic schema在此路径已实测验证（Kimi兼容层虽支持json_schema，
+        # 保持原路径最小改动）；基类helper同时记录schema供日志打印
         self.structured_llm = self._make_structured_llm(ReviewDecision)
 
     def get_system_prompt(self) -> str:

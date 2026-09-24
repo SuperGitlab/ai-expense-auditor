@@ -121,10 +121,13 @@ def test_ignores_pending_and_terminal(client, db_session):
 def test_handler_dispatches_resume(client, db_session, db_engine, monkeypatch):
     """worker_ready处理器：扫描并派发 resume=True；卡死单重派、活跃单不动"""
     import app.database as database_module
+    import app.tasks.queue_inspect as queue_inspect_module
     import app.tasks.review as review_module
 
     factory = sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
     monkeypatch.setattr(database_module, "SessionLocal", factory)
+    # 固定在途集合为空：避免本机真Redis里恰好有同id消息时误跳过（测试与broker解耦）
+    monkeypatch.setattr(queue_inspect_module, "inflight_expense_ids", lambda: set())
 
     dispatched: list = []
 
@@ -143,3 +146,32 @@ def test_handler_dispatches_resume(client, db_session, db_engine, monkeypatch):
     review_module.resubmit_stuck_reviews()  # 直接调（worker_ready信号在测试中不触发）
 
     assert dispatched == [(stuck_id, True)]
+
+
+@requires_db
+def test_handler_skips_inflight_duplicates(client, db_session, db_engine, monkeypatch):
+    """多worker并发启动防重复派发：卡死单的消息已在队列/已被领取（在途）→ 不再重派"""
+    import app.database as database_module
+    import app.tasks.queue_inspect as queue_inspect_module
+    import app.tasks.review as review_module
+
+    factory = sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
+    monkeypatch.setattr(database_module, "SessionLocal", factory)
+
+    stuck_id = _submitted_expense(client, "sweep_e8")
+    _age_expense(db_session, stuck_id, minutes=20)
+
+    dispatched: list = []
+
+    class _StubTask:
+        def delay(self, expense_id, resume=False):
+            dispatched.append((expense_id, resume))
+
+    monkeypatch.setattr(review_module, "run_ai_review", _StubTask())
+    monkeypatch.setattr(
+        queue_inspect_module, "inflight_expense_ids", lambda: {stuck_id}
+    )  # 模拟另一worker先启动已把它派进队列
+
+    review_module.resubmit_stuck_reviews()
+
+    assert dispatched == []  # 在途不重复派发

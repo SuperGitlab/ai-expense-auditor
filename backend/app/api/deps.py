@@ -1,6 +1,6 @@
 """
 API公共依赖
-数据库会话、当前用户解析、角色/权限校验
+数据库会话、当前用户解析、角色校验
 """
 from typing import Annotated, Generator
 
@@ -60,22 +60,6 @@ def require_roles(*roles: UserRole):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"需要角色权限: {', '.join(r.value for r in roles)}",
-            )
-        return current_user
-    return checker
-
-
-def require_permission(permission: str):
-    """
-    权限校验依赖工厂：复用User.has_permission的权限映射
-
-    用法: current_user: User = Depends(require_permission("approve"))
-    """
-    def checker(current_user: Annotated[User, Depends(get_current_user)]) -> User:
-        if not current_user.has_permission(permission):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"缺少权限: {permission}",
             )
         return current_user
     return checker

@@ -2,6 +2,7 @@
 报销接口
 报销单CRUD、提交、取消
 """
+import logging
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -15,6 +16,8 @@ from app.schemas.expense import (ExpenseCreate, ExpenseListResponse,
 from app.services import expense_service
 from app.tasks import celery_app
 from app.tasks.review import run_ai_review
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/expenses", tags=["报销管理"])
 
@@ -36,18 +39,13 @@ def _ensure_review_queue() -> None:
     finally:
         try:
             conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("关闭broker连接失败（忽略）: %s", e)
 
-
-# @router.post("", response_model=ExpenseResponse, status_code=status.HTTP_201_CREATED)
-# def create_expense(data: ExpenseCreate, db: DBSession, current_user: CurrentUser):
-#     """创建报销单（草稿状态）"""
-#     return expense_service.create_expense(db, current_user, data)
 
 @router.post("", response_model=ExpenseResponse, status_code=status.HTTP_201_CREATED)
 def create_expense(data: ExpenseCreate, db: DBSession, current_user: CurrentUser):
-    """创建报销状态"""
+    """创建报销单（草稿状态）"""
     return expense_service.create_expense(db, current_user, data)
 
 

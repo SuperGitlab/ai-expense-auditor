@@ -22,14 +22,14 @@ def _isolate_env(monkeypatch):
 def _defaults() -> Settings:
     return Settings(
         _env_file=None,
-        SECRET_KEY="x", GLM_API_KEY="x", JWT_SECRET_KEY="x",
+        SECRET_KEY="x", LLM_API_KEY="x", EMBEDDING_API_KEY="x", JWT_SECRET_KEY="x",
     )
 
 
 def test_ocr_defaults():
     s = _defaults()
     assert s.OCR_PROVIDER == "hybrid"
-    assert s.VLM_MODEL_NAME == "glm-4.1v-flash"
+    assert s.VLM_MODEL_NAME == "k3"
     assert s.OCR_MIN_CONFIDENCE == 0.85
 
 

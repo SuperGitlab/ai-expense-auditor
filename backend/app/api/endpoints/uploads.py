@@ -80,5 +80,5 @@ async def upload_invoice_ocr(file: UploadFile, current_user: CurrentUser, db: DB
             "category_id": cat.id if cat else None,
         }
     except Exception as e:
-        logger.warning(f"上传OCR识别失败，降级为普通上传 [{url}]: {e}")
+        logger.warning("上传OCR识别失败，降级为普通上传 [%s]: %s", url, e)
     return {"url": url, "filename": file.filename, "size": len(content), "fields": fields}

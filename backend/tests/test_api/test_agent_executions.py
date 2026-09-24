@@ -115,3 +115,24 @@ def test_executions_exposes_can_retry(client, db_session):
     resp = client.get(f"/api/agent/executions/{expense_id}", headers=admin)
     assert resp.status_code == 200
     assert resp.json()["can_retry"] is False
+
+
+@requires_db
+def test_executions_queue_status(client, db_session, monkeypatch):
+    """排队可见性：SUBMITTED未开跑→透出queue_status；一旦有节点行（已开跑）即不再探查"""
+    from app.api.endpoints import agent as agent_module
+
+    expense_id, headers = _submitted_expense(client, "exec_e6")
+
+    monkeypatch.setattr(
+        agent_module, "review_queue_status", lambda eid: {"state": "queued", "ahead": 2}
+    )
+    resp = client.get(f"/api/agent/executions/{expense_id}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["queue_status"] == {"state": "queued", "ahead": 2}
+
+    # 已开跑（有节点行）：queue_status=None，画布显示节点状态而非排队提示
+    wf._record_node(db_session, expense_id, "document", "running")
+    resp = client.get(f"/api/agent/executions/{expense_id}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["queue_status"] is None

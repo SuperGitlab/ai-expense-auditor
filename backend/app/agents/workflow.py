@@ -46,12 +46,12 @@ def _dump(obj: Any) -> str:
 async def _run_with_log(agent: Any, input_data: dict) -> AgentResult:
     """执行Agent并打印请求参数与返回结果（工作流观测）；星号线分隔每个Agent的日志块"""
     logger.info("*" * 60)
-    logger.info(f"Agent[{agent.name}] ▶ 请求参数:\n{_dump(input_data)}")
+    logger.info("Agent[%s] ▶ 请求参数:\n%s", agent.name, _dump(input_data))
     result = await agent.run(input_data)
-    logger.info(
-        f"Agent[{agent.name}] ◀ 返回结果:\n"
-        f"{_dump({'success': result.success, 'message': result.message, 'data': result.data})}"
+    result_dump = _dump(
+        {"success": result.success, "message": result.message, "data": result.data}
     )
+    logger.info("Agent[%s] ◀ 返回结果:\n%s", agent.name, result_dump)
     return result
 
 
@@ -113,10 +113,10 @@ def _dump_output(value) -> str | None:
     try:
         text = json.dumps(value, ensure_ascii=False, default=str)
     except (TypeError, ValueError) as e:
-        logger.warning(f"节点输出不可序列化，放弃断点checkpoint: {e}")
+        logger.warning("节点输出不可序列化，放弃断点checkpoint: %s", e)
         return None
     if len(text) > _OUTPUT_JSON_LIMIT:
-        logger.warning(f"节点输出超{_OUTPUT_JSON_LIMIT}字符，放弃断点checkpoint")
+        logger.warning("节点输出超%s字符，放弃断点checkpoint", _OUTPUT_JSON_LIMIT)
         return None
     return text
 
@@ -133,6 +133,10 @@ def _record_node(
     if run is None:
         run = AgentNodeRun(expense_id=expense_id, node=node, started_at=utc_now())
         db.add(run)
+    elif run.status == "overridden" and status != "overridden":
+        # 人审终态保护：人工已裁决标记的节点，仍在执行的AI不得回写状态（画布以人为主）
+        logger.info("节点轨迹保持人审优先 报销单#%s/%s: 忽略AI状态写入 %s", expense_id, node, status)
+        return run
     run.status = status
     if status == "running":
         # 重跑同一节点：刷新开始时间（续跑时长不失真、sweep判活准确），旧checkpoint作废
@@ -143,6 +147,33 @@ def _record_node(
     run.output_json = output_json
     db.commit()
     return run
+
+
+def mark_nodes_human_first(db: Session, expense_id: int, final_status: str) -> None:
+    """
+    人审落定→画布立即以人为主：未完成节点（执行中/失败/未启动）一律标overridden，
+    已成功节点保留真实AI结果。人工审批/接管成功后调用；
+    与仍在执行的AI写入的竞态由_record_node的overridden终态保护兜住。
+    """
+    for node in _NODE_STATE_KEYS:
+        run = db.query(AgentNodeRun).filter(
+            AgentNodeRun.expense_id == expense_id, AgentNodeRun.node == node
+        ).first()
+        if run is not None and run.status in ("succeeded", "overridden"):
+            continue
+        now = utc_now()
+        if run is None:
+            db.add(AgentNodeRun(
+                expense_id=expense_id, node=node, started_at=now, finished_at=now,
+                status="overridden",
+                detail=f"人审结果优先：人工已将单据流转为 {final_status}，本节点不再执行",
+            ))
+        else:
+            run.status = "overridden"
+            run.finished_at = now
+            run.output_json = None
+            run.detail = f"人审结果优先：人工已将单据流转为 {final_status}，本节点中止"
+    db.commit()
 
 
 def _node_session() -> Session:
@@ -159,7 +190,7 @@ def _record_node_quiet(expense_id: int, node: str, status: str,
         with _node_session() as db:
             _record_node(db, expense_id, node, status, detail, error, output_json)
     except Exception as e:
-        logger.warning(f"节点轨迹写入失败（不影响审核）: {node}/{status}: {e}")
+        logger.warning("节点轨迹写入失败（不影响审核）: %s/%s: %s", node, status, e)
 
 
 def _traced(name: str, fn):
@@ -432,7 +463,7 @@ class ExpenseReviewWorkflow:
             try:
                 value = json.loads(row.output_json)
             except (TypeError, ValueError):
-                logger.warning(f"节点{row.node}的checkpoint JSON损坏，忽略")
+                logger.warning("节点%s的checkpoint JSON损坏，忽略", row.node)
                 continue
             if isinstance(value, dict):
                 init_state[key] = value
@@ -512,8 +543,8 @@ class ExpenseReviewWorkflow:
             db.add(_ai_review_record())
             db.commit()
             logger.info(
-                f"AI审核被人审接管 报销单#{expense_id}: 人工终态={expense.status.value} "
-                f"AI裁决={action}（仅留档不生效）"
+                "AI审核被人审接管 报销单#%s: 人工终态=%s AI裁决=%s（仅留档不生效）",
+                expense_id, expense.status.value, action,
             )
             return result
 
@@ -557,23 +588,24 @@ class ExpenseReviewWorkflow:
         try:
             notify_ai_review(db, expense, action, decision.get("reason", ""))
         except Exception as e:
-            logger.warning(f"AI审核通知失败（不影响主流程）: {e}")
+            logger.warning("AI审核通知失败（不影响主流程）: 报销单#%s, err=%s", expense_id, e)
 
-        # 5. 知识库回填（失败不影响主流程）
-        try:
-            knowledge_base.add_case_from_expense(snapshot, {
-                "action": action,
-                "reason": decision.get("reason", ""),
-                "risk_level": risk_level,
-                "risk_score": risk_score,
-                "final_status": expense.status.value,
-            })
-        except Exception as e:
-            logger.warning(f"知识库回填失败: {e}")
+        # 5. 知识库回填（失败不影响主流程；RAG停用时跳过——不调嵌入接口不写Milvus）
+        if settings.RAG_PROVIDER != "off":
+            try:
+                knowledge_base.add_case_from_expense(snapshot, {
+                    "action": action,
+                    "reason": decision.get("reason", ""),
+                    "risk_level": risk_level,
+                    "risk_score": risk_score,
+                    "final_status": expense.status.value,
+                })
+            except Exception as e:
+                logger.warning("知识库回填失败 报销单#%s: %s", expense_id, e)
 
         logger.info(
-            f"AI审核完成 报销单#{expense_id}: {action} 风险{risk_score}({risk_level}) "
-            f"耗时{elapsed}s 错误{len(errors)}个"
+            "AI审核完成 报销单#%s: %s 风险%s(%s) 耗时%ss 错误%s个",
+            expense_id, action, risk_score, risk_level, elapsed, len(errors),
         )
 
         return result

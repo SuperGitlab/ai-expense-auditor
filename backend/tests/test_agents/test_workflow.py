@@ -1,7 +1,7 @@
 """
-LangGraph审核工作流测试（真实调用GLM，默认跳过）
+LangGraph审核工作流测试（真实调用Kimi，默认跳过）
 
-启用方式（需配置GLM_API_KEY且测试库可达）:
+启用方式（需配置LLM_API_KEY且测试库可达）:
     uv run pytest -m llm -v
 """
 import pytest

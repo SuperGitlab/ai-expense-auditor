@@ -55,16 +55,6 @@ class User(Base):
     def __repr__(self):
         return f"<User(id={self.id}, username={self.username}, role={self.role})>"
 
-    @property
-    def is_finance(self) -> bool:
-        """是否为财务人员"""
-        return self.role == UserRole.FINANCE
-
-    @property
-    def is_manager(self) -> bool:
-        """是否为经理"""
-        return self.role == UserRole.MANAGER
-
     def has_permission(self, permission: str) -> bool:
         """
         检查用户是否有指定权限

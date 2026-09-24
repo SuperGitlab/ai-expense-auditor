@@ -90,6 +90,50 @@ def test_human_rejection_wins_over_ai(client, db_session, monkeypatch):
 
 
 @requires_db
+def test_human_decision_marks_unfinished_nodes(client, db_session):
+    """人审落定→画布立即以人为主：未完成节点标overridden（含未启动的补行），
+    已成功节点保留真实AI结果；此后AI的状态回写被终态保护拒绝"""
+    headers = register_and_login(client, "race_e4")
+    resp = client.post("/api/expenses", json=PAYLOAD, headers=headers)
+    expense_id = resp.json()["id"]
+    client.post(f"/api/expenses/{expense_id}/submit", headers=headers)
+
+    # 模拟AI半途：document/rule成功、rag执行中、risk/decision未启动（无行）
+    from app.utils.helpers import utc_now
+    for node, status in (("document", "succeeded"), ("rule", "succeeded"), ("rag", "running")):
+        db_session.add(AgentNodeRun(
+            expense_id=expense_id, node=node, status=status, started_at=utc_now()
+        ))
+    db_session.commit()
+
+    manager_headers = register_and_login(client, "race_mgr4", role="manager")
+    resp = client.post(
+        "/api/approvals/takeover",
+        json={"expense_id": expense_id, "action": "approve", "comment": "紧急"},
+        headers=manager_headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    runs = {
+        r.node: r for r in db_session.query(AgentNodeRun).filter_by(expense_id=expense_id)
+    }
+    assert runs["document"].status == "succeeded"   # 已完成节点保留
+    assert runs["rule"].status == "succeeded"
+    assert runs["rag"].status == "overridden"       # 执行中→人审优先
+    assert runs["risk"].status == "overridden"      # 未启动也补齐标记
+    assert runs["decision"].status == "overridden"
+    assert "人审结果优先" in (runs["risk"].detail or "")
+
+    # 终态保护：还在跑的AI随后记rag=succeeded不得生效（人为主）
+    wf._record_node(db_session, expense_id, "rag", "succeeded", detail="检索完成")
+    db_session.expire_all()
+    rag = db_session.query(AgentNodeRun).filter_by(
+        expense_id=expense_id, node="rag").one()
+    assert rag.status == "overridden"
+
+
+@requires_db
 def test_normal_path_still_lands_when_submitted(client, db_session, monkeypatch):
     """守卫不影响正常路径：仍是SUBMITTED时AI结果照常落库生效"""
     _setup(monkeypatch)

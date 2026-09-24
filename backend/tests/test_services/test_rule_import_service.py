@@ -4,6 +4,7 @@
 """
 import pytest
 
+from app.config import settings
 from app.services.rule_import_service import (
     ExtractedRule,
     annotate_draft_rows,
@@ -199,3 +200,70 @@ def test_read_pdf_fallback_to_ocr(tmp_path, monkeypatch):
     text, method = read_document_text(p)
     assert method == "pdf_ocr"
     assert text.startswith("OCR识别出的制度文本")
+
+
+# ---------- 抽取LLM客户端配置 ----------
+
+def test_extraction_llm_timeout_bounded():
+    """抽取LLM超时必须有界（Celery任务内调用也要兜底，无界挂起=worker被冻住）；
+    用抽取专属的10分钟（思考模型大文档思考+工具调用超5分钟常见）；
+    网络层不自动重试（重试把最坏等待翻倍），None截断由service层针对性重试"""
+    from app.services.rule_import_service import (
+        EXTRACTION_LLM_TIMEOUT_SECONDS,
+        _build_extraction_llm,
+    )
+
+    llm = _build_extraction_llm()
+    assert llm.request_timeout == EXTRACTION_LLM_TIMEOUT_SECONDS
+    assert llm.max_retries == 0
+    # 输出额度必须给足：思考token计入额度，8192会在思考阶段烧完导致工具调用被截断
+    assert llm.max_tokens == 65536
+
+
+def test_extract_rules_retries_once_on_none(monkeypatch):
+    """思考模型烧完输出额度时不发工具调用（结构化输出None）：自动重试一次可救回"""
+    from app.services import rule_import_service as svc
+
+    calls = {"n": 0}
+
+    class FakeStructured:
+        def invoke(self, msgs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return None  # 第一次：思考token耗尽被截断
+            return svc.ExtractedRules(
+                rules=[
+                    svc.ExtractedRule(
+                        name="住宿上限", code="HOTEL_600", field_name="amount",
+                        operator="gt", threshold="600",
+                    )
+                ]
+            )
+
+    class FakeLLM:
+        def with_structured_output(self, schema, method=None, tool_choice=None):
+            return FakeStructured()
+
+    monkeypatch.setattr(svc, "_build_extraction_llm", lambda: FakeLLM())
+    result = svc.extract_rules_from_text("制度文本", [])
+    assert calls["n"] == 2
+    assert result.rules[0].code == "HOTEL_600"
+
+
+def test_extract_rules_none_twice_actionable_error(monkeypatch):
+    """两次都None：报可操作的错误（提示重试/拆分文档），不再抛晦涩的"类型异常\""""
+    import pytest
+
+    from app.services import rule_import_service as svc
+
+    class FakeStructured:
+        def invoke(self, msgs):
+            return None
+
+    class FakeLLM:
+        def with_structured_output(self, schema, method=None, tool_choice=None):
+            return FakeStructured()
+
+    monkeypatch.setattr(svc, "_build_extraction_llm", lambda: FakeLLM())
+    with pytest.raises(svc.LLMExtractionError, match="拆分"):
+        svc.extract_rules_from_text("制度文本", [])

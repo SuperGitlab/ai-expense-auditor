@@ -63,7 +63,7 @@ def decode_token(token: str) -> Optional[dict]:
     try:
         return jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
     except JWTError as e:
-        logger.debug(f"JWT解码失败: {e}")
+        logger.debug("JWT解码失败: %s", e)
         return None
 
 
@@ -92,7 +92,7 @@ def register_user(db: Session, user_in: UserCreate) -> User:
     db.add(user)
     db.commit()
     db.refresh(user)
-    logger.info(f"新用户注册: {user.username} ({user.role.value})")
+    logger.info("新用户注册: %s (%s)", user.username, user.role.value)
     return user
 
 

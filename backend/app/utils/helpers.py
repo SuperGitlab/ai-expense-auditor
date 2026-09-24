@@ -46,18 +46,6 @@ def decimal_to_float(value: Any) -> Any:
     return value
 
 
-def format_amount(value: Decimal | float | None) -> str:
-    """金额格式化：千分位 + 两位小数"""
-    if value is None:
-        return "0.00"
-    return f"{float(value):,.2f}"
-
-
 def utc_now() -> datetime:
     """当前UTC时间（带时区）"""
     return datetime.now(timezone.utc)
-
-
-def calc_total_pages(total: int, page_size: int) -> int:
-    """计算总页数"""
-    return (total + page_size - 1) // page_size if page_size else 0

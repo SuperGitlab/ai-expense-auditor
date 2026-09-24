@@ -35,14 +35,6 @@ class UserCreate(UserBase):
     role: UserRole = Field(UserRole.EMPLOYEE, description="角色")
 
 
-class UserUpdate(BaseModel):
-    """用户信息更新模式"""
-    full_name: Optional[str] = Field(None, max_length=100)
-    phone: Optional[str] = Field(None, max_length=20)
-    department: Optional[str] = Field(None, max_length=100)
-    position: Optional[str] = Field(None, max_length=100)
-
-
 class UserRoleUpdate(BaseModel):
     """用户角色更新模式（admin用）"""
     role: UserRole

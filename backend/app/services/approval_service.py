@@ -18,10 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def list_pending(db: Session, user: User) -> List[Expense]:
-    """
-    待审批列表（两级链）：
-    manager 见 PENDING（本部门）；finance/admin 见 PENDING + MANAGER_APPROVED
-    """
+
     if not user.has_permission("approve"):
         raise HTTPException(status_code=403, detail="无审批权限")
 
@@ -38,8 +35,23 @@ def list_pending(db: Session, user: User) -> List[Expense]:
     return query.order_by(Expense.submitted_at.asc()).all()
 
 
+def list_running(db: Session, user: User) -> List[Expense]:
+
+    if not user.has_permission("approve"):
+        raise HTTPException(status_code=403, detail="无审批权限")
+
+    query = db.query(Expense).filter(Expense.status == ExpenseStatus.SUBMITTED)
+    # manager 与初审队列同口径：只看本部门
+    if user.role == UserRole.MANAGER:
+        from app.models.user import User as UserModel
+        query = query.join(UserModel, Expense.user_id == UserModel.id).filter(
+            UserModel.department == user.department,
+        )
+    return query.order_by(Expense.submitted_at.asc()).all()
+
+
 def get_history(db: Session, expense_id: int) -> List[Approval]:
-    """报销单审批历史（按时间正序）"""
+
     return (
         db.query(Approval)
         .filter(Approval.expense_id == expense_id)
@@ -50,17 +62,7 @@ def get_history(db: Session, expense_id: int) -> List[Approval]:
 
 def decide(db: Session, user: User, req: ApprovalDecisionRequest, *,
            takeover: bool = False) -> Expense:
-    """
-    两级审批决策（规则表）：
-    manager: PENDING(本部门) approve→MANAGER_APPROVED / reject→REJECTED
-    finance: MANAGER_APPROVED approve→APPROVED(写approved_at) / reject→REJECTED
-    admin:   PENDING/MANAGER_APPROVED 越级直批→APPROVED（留痕）/ reject→REJECTED
 
-    takeover=True（人工接管，人审优先）：额外允许 SUBMITTED（AI执行中）与
-    PENDING（待初审）——manager 视同初审；finance/admin 直达 APPROVED 跳过初审
-    （紧急报销快速通道，留痕[管理员越级直批]/[财务越级直批]）；
-    AI之后算出的结论不覆盖人工结果（workflow落库守卫）
-    """
     if not user.has_permission("approve"):
         raise HTTPException(status_code=403, detail="无审批权限")
 
@@ -141,6 +143,12 @@ def decide(db: Session, user: User, req: ApprovalDecisionRequest, *,
     ))
     db.commit()
     db.refresh(expense)
+    # 人审落定→画布立即以人为主：未完成AI节点标overridden（失败不影响审批本身）
+    try:
+        from app.agents.workflow import mark_nodes_human_first
+        mark_nodes_human_first(db, expense.id, expense.status.value)
+    except Exception as e:
+        logger.warning("人审优先节点标记失败（不影响审批）: 报销单%s, err=%s", expense.expense_no, e)
     # 通知申请人（站内信必有、邮件尽力而为；任何失败不影响审批结果）
     try:
         notify_human_decision(
@@ -149,6 +157,6 @@ def decide(db: Session, user: User, req: ApprovalDecisionRequest, *,
             reason=req.comment, step=step,
         )
     except Exception as e:
-        logger.warning(f"审批结果通知失败（不影响主流程）: {e}")
-    logger.info(f"{user.username} {req.action}({step}) 报销单 {expense.expense_no}")
+        logger.warning("审批结果通知失败（不影响主流程）: 报销单%s, err=%s", expense.expense_no, e)
+    logger.info("%s %s(%s) 报销单 %s", user.username, req.action, step, expense.expense_no)
     return expense

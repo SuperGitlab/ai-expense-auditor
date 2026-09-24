@@ -1,5 +1,5 @@
 """
-GLM视觉模型端到端抽取（复杂票面兜底）
+Kimi视觉模型端到端抽取（复杂票面兜底）
 图片base64 → VLM → JSON字段；任何失败返回None（pipeline降级）
 """
 import base64
@@ -52,19 +52,29 @@ def _parse_json(content: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _build_llm():
+    """VLM客户端工厂：超时/重试与主链路LLM同源——无界挂起同样会拖死审核worker"""
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        model=settings.VLM_MODEL_NAME,
+        api_key=settings.LLM_API_KEY,
+        base_url=settings.LLM_API_BASE,
+        # K3思考模型仅允许temperature=1，不传（默认1）
+        # K3思考token计入上限：只出短JSON但推理不可控，2048留余量
+        max_tokens=2048,
+        reasoning_effort=settings.LLM_REASONING_EFFORT,
+        timeout=settings.LLM_TIMEOUT_SECONDS,
+        max_retries=settings.LLM_MAX_RETRIES,
+    )
+
+
 def extract_fields(path: str | Path) -> dict | None:
     """VLM抽取发票字段；失败返回None（调用方降级，不抛异常）"""
     try:
         from langchain_core.messages import HumanMessage
-        from langchain_openai import ChatOpenAI
 
-        llm = ChatOpenAI(
-            model=settings.VLM_MODEL_NAME,
-            api_key=settings.GLM_API_KEY,
-            base_url=settings.GLM_API_BASE,
-            temperature=0,
-            max_tokens=1024,
-        )
+        llm = _build_llm()
         msg = HumanMessage(content=[
             {"type": "text", "text": _PROMPT},
             {"type": "image_url", "image_url": {"url": _image_data_url(Path(path))}},
@@ -72,5 +82,5 @@ def extract_fields(path: str | Path) -> dict | None:
         resp = llm.invoke([msg])
         return _parse_json(resp.content)
     except Exception as e:
-        logger.warning(f"VLM抽取失败: {e}")
+        logger.warning("VLM抽取失败 [%s]: %s", Path(path).name, e)
         return None

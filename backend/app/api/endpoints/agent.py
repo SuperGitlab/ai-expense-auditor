@@ -13,6 +13,7 @@ from app.config import settings
 from app.models import AgentNodeRun, ExpenseStatus, UserRole
 from app.schemas.agent import AIReviewRequest, AIReviewResponse
 from app.services.expense_service import get_expense
+from app.tasks.queue_inspect import review_queue_status
 from app.tasks.review import run_ai_review
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,19 @@ def get_executions(expense_id: int, db: DBSession, current_user: CurrentUser):
             or current_user.role in (UserRole.FINANCE, UserRole.ADMIN)
         )
     )
-    return {"nodes": nodes, "expense_status": expense.status.value, "can_retry": can_retry}
+    # 排队可见性：SUBMITTED且未开跑（无节点行）时探查队列——画布据此区分
+    # "排队中（前面还有N单）"与"任务不在队列（可能丢失，可重跑）"
+    queue_status = (
+        review_queue_status(expense_id)
+        if not runs and expense.status == ExpenseStatus.SUBMITTED
+        else None
+    )
+    return {
+        "nodes": nodes,
+        "expense_status": expense.status.value,
+        "can_retry": can_retry,
+        "queue_status": queue_status,
+    }
 
 
 @router.post("/executions/{expense_id}/retry")
@@ -139,5 +152,5 @@ def retry_review(expense_id: int, db: DBSession, current_user: CurrentUser):
 
     _ensure_review_queue()  # 503：Redis/队列不可用
     run_ai_review.delay(expense_id, resume=True)
-    logger.info(f"断点恢复重跑已派发 报销单#{expense_id}（操作人 {current_user.username}）")
+    logger.info("断点恢复重跑已派发 报销单#%s（操作人 %s）", expense_id, current_user.username)
     return {"expense_id": expense_id, "dispatched": True, "resume": True}

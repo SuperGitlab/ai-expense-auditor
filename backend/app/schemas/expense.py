@@ -38,16 +38,6 @@ class ExpenseItemCreate(ExpenseItemBase):
     pass
 
 
-class ExpenseItemUpdate(BaseModel):
-    """更新报销项目模式"""
-    category_id: Optional[int] = None
-    description: Optional[str] = Field(None, min_length=1, max_length=500)
-    amount: Optional[Decimal] = Field(None, gt=0)
-    expense_date: Optional[date] = None
-    invoice_no: Optional[str] = None
-    invoice_url: Optional[str] = None
-
-
 class ExpenseItemResponse(ExpenseItemBase):
     """报销项目响应模式"""
     model_config = ConfigDict(from_attributes=True)
@@ -115,15 +105,3 @@ class ExpenseListResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
-
-
-class ExpenseSubmit(BaseModel):
-    """提交报销单模式"""
-    expense_id: int
-
-
-class ExpenseApprove(BaseModel):
-    """审批报销单模式"""
-    expense_id: int
-    status: ExpenseStatus
-    comment: Optional[str] = Field(None, max_length=500, description="审批意见")

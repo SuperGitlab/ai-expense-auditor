@@ -15,14 +15,6 @@ from app.services.auth_service import (authenticate_user, create_access_token,
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
 
-# @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-# def register(user_in: UserCreate, db: DBSession):
-#     """用户注册"""
-#     try:
-#         return register_user(db, user_in)
-#     except ValueError as e:
-#         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(user_in: UserCreate, db: DBSession):
     """用户注册"""
@@ -45,17 +37,6 @@ def login(form: Annotated[OAuth2PasswordRequestForm, Depends()], db: DBSession):
         )
     return Token(access_token=create_access_token(user), user=UserResponse.model_validate(user))
 
-
-# @router.post("/login-json", response_model=Token)
-# def login_json(login_in: LoginRequest, db: DBSession):
-#     """登录（JSON方式，前端使用）"""
-#     user = authenticate_user(db, login_in.username, login_in.password)
-#     if not user:
-#         raise HTTPException(
-#             status_code=status.HTTP_401_UNAUTHORIZED,
-#             detail="用户名或密码错误",
-#         )
-#     return Token(access_token=create_access_token(user), user=UserResponse.model_validate(user))
 
 @router.post("/login-json", response_model=Token)
 def login_json(login_in: LoginRequest, db: DBSession):

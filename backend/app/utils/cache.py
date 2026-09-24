@@ -27,7 +27,7 @@ def _get_redis():
         _pool = client
         logger.info("Redis缓存已连接")
     except Exception as e:
-        logger.warning(f"Redis不可用，缓存功能降级: {e}")
+        logger.warning("Redis不可用，缓存功能降级: %s", e)
     return _pool
 
 
@@ -49,12 +49,12 @@ def cache_get_or_set(key: str, producer: Callable[[], Any], ttl: int = 60) -> An
         cached = client.get(key)
         if cached is not None:
             return json.loads(cached)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("缓存读取失败，跳过缓存直接执行: key=%s, err=%s", key, e)
 
     value = producer()
     try:
         client.setex(key, ttl, json.dumps(value, default=str))
     except Exception as e:
-        logger.debug(f"缓存写入失败: {e}")
+        logger.debug("缓存写入失败: key=%s, err=%s", key, e)
     return value

@@ -8,6 +8,7 @@ from typing import Any, Dict, List  # 类型标注
 from pydantic import BaseModel, Field  # 定义LLM结构化输出的schema（字段名+类型+说明即提示词的一部分）
 
 from app.agents.base_agent import AgentResult, BaseAgent  # 基类：LLM客户端 + structured_chat + 统一返回结构
+from app.config import settings
 from app.rag.retriever import ExpenseRetriever  # 两路检索器（Milvus向量库：制度/案例两个collection）
 
 
@@ -26,7 +27,8 @@ class RAGAgent(BaseAgent):
     def __init__(self):
         super().__init__(name="RAG检索Agent")  # 初始化基类（LLM客户端、记忆等）
         self.retriever = ExpenseRetriever()  # 检索器：内含制度/案例两个向量库句柄
-        # GLM兼容接口不支持response_format，走tool-call模式（基类helper同时记录schema供日志打印）
+        # tool-call模式：嵌套Pydantic schema在此路径已实测验证（Kimi兼容层虽支持json_schema，
+        # 保持原路径最小改动）；基类helper同时记录schema供日志打印
         self.structured_llm = self._make_structured_llm(RAGSummary)
 
     def get_system_prompt(self) -> str:
@@ -59,6 +61,15 @@ class RAGAgent(BaseAgent):
         """
         input_data: {"expense": snapshot}
         """
+        # RAG停用短路：不组查询不调嵌入不碰Milvus也不调LLM（画布节点保留，显示空结果）
+        if settings.RAG_PROVIDER == "off":
+            return AgentResult(
+                success=True,
+                data={"relevant_rules": [], "similar_cases": [],
+                      "retrieval_note": "RAG检索未启用（RAG_PROVIDER=off）"},
+                message="RAG未启用",
+            )
+
         snapshot = input_data["expense"]  # 报销单快照（expense主表 + items明细）
         query = self._build_query(snapshot)  # 组装向量检索查询串
 
@@ -86,7 +97,7 @@ class RAGAgent(BaseAgent):
                 "请筛选总结。"
             )
             # structured_chat：system prompt + 一次性prompt调self.structured_llm，
-            # 返回RAGSummary对象（function_calling模式保证GLM兼容）
+            # 返回RAGSummary对象（function_calling模式，嵌套schema兼容性已实测验证）
             result: RAGSummary = await self.structured_chat(prompt)
             data = {
                 # LLM筛选后的相关制度条文（原文摘录列表）

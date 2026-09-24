@@ -8,8 +8,6 @@ import uuid  # 生成全局唯一随机ID（uuid4），给每个知识块当主�
 
 from datetime import datetime  # 给制度导入块打导入时间戳（向量库metadata只收标量，存ISO字符串）
 
-from typing import Optional  # 类型标注工具（本文件当前未实际使用，保留的历史导入）
-
 from app.rag.vectorstore import VectorStore  # 向量库的门面类：内部封装Milvus的增/查/计数
 from app.rag.retriever import CASES_COLLECTION, POLICIES_COLLECTION  # 两个"表"（集合）的名字常量
 
@@ -94,9 +92,9 @@ class KnowledgeBaseManager:
                 ids.append(f"policy-{uuid.uuid4().hex[:12]}")
         if not texts:  # 传入的文档全是空的 → 没有任何块要入库
             return 0
-        # 真正入库：VectorStore内部先调GLM embedding把每块文本变向量，再连同元数据/ID写入Milvus
+        # 真正入库：VectorStore内部先调Qwen3-Embedding把每块文本变向量，再连同元数据/ID写入Milvus
         added = self.policies_store.add_documents(texts, metadatas, ids)
-        logger.info(f"财务制度入库：{added} 块")
+        logger.info("财务制度入库：%s 块", added)
         return added  # 返回块数（注意≠篇数：超500字的长文档会被切成多块）
 
     def clear_policies(self) -> bool:
@@ -179,9 +177,3 @@ class KnowledgeBaseManager:
         case_id = f"case-{expense.get('id')}-{uuid.uuid4().hex[:6]}"
         # 单条入库：注意三个参数都是只装1个元素的列表（复用同一个批量接口）
         return self.cases_store.add_documents([text], [metadata], [case_id])
-
-    def reset(self) -> None:
-        """清空两个集合（开发调试用）"""
-        self.policies_store.reset()  # 清空制度库
-        self.cases_store.reset()  # 清空案例库
-        logger.info("知识库已清空")

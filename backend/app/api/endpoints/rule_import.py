@@ -17,12 +17,15 @@ from app.rag.vectorstore import is_available
 from app.schemas.rule_import import (
     DocumentImportConfirmRequest,
     ExtractionDraftResponse,
+    ExtractionStatusResponse,
+    ExtractionSubmitResponse,
     ImportResultResponse,
     RuleImportJsonRequest,
     RuleImportRowError,
-    SectionOut,
 )
 from app.services import rule_import_service as svc
+from app.tasks import celery_app
+from app.tasks.rule_extraction import extract_document_task
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +38,19 @@ AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
 from app.agents.workflow import knowledge_base  # noqa: E402
 
 ALLOWED_EXTS = {".docx", ".pdf"}
-MIN_DOC_TEXT_CHARS = 30  # 解析文本低于此长度视为无效（扫描件识别失败）
 MAX_SECTIONS_CHARS = 500_000  # 确认回传的章节总字符上限
 
 
-def _row_errors_response(errors: list[RuleImportRowError]) -> JSONResponse:
+def _row_errors_response(errors: list[RuleImportRowError], channel: str) -> JSONResponse:
     """400逐行错误明细（errors与detail平级：detail给toast，errors给前端错误表格）"""
+    # 拒绝原因同步落服务端日志：控制台排障不再只看到一行400访问日志
+    # （明细最多带10行防刷屏，完整逐行明细前端错误表格里有）
+    lines = [f"第{e.index}行({e.code}): {'；'.join(e.errors)}" for e in errors]
+    suffix = " …(其余%s行省略)" % (len(lines) - 10) if len(lines) > 10 else ""
+    logger.warning(
+        "规则导入整体拒绝[%s] 共%s行失败: %s%s",
+        channel, len(errors), " | ".join(lines[:10]), suffix,
+    )
     return JSONResponse(
         status_code=400,
         content={
@@ -56,7 +66,7 @@ def import_rules_json(payload: RuleImportJsonRequest, db: DBSession, current_use
     try:
         rules = svc.import_json_rules(db, payload.rules)
     except svc.ImportValidationError as e:
-        return _row_errors_response(e.errors)
+        return _row_errors_response(e.errors, "JSON直导")
     return ImportResultResponse(
         imported=len(rules),
         rules=rules,
@@ -66,11 +76,13 @@ def import_rules_json(payload: RuleImportJsonRequest, db: DBSession, current_use
     )
 
 
-@router.post("/document/extract", response_model=ExtractionDraftResponse)
-def extract_document(file: UploadFile, db: DBSession, current_user: AdminUser):
-    """上传docx/pdf → 解析+章节切分+LLM抽取规则草稿（不写任何存储，预览确认两步式的第一步）
+@router.post("/document/extract", response_model=ExtractionSubmitResponse)
+def extract_document(file: UploadFile, current_user: AdminUser):
+    """上传docx/pdf → 校验+落盘+派发后台抽取任务，毫秒级返回task_id
 
-    同步def：FastAPI自动放线程池执行，OCR/LLM长调用不阻塞事件循环。
+    LLM抽取1-5分钟：同步等会占死线程池线程、用户不敢关窗口。
+    任务结果存Redis result backend（1小时），完成/失败均发站内通知；
+    前端轮询 GET /document/extract/{task_id} 取回草稿，确认入库仍走 /document/confirm。
     """
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_EXTS:
@@ -82,41 +94,26 @@ def extract_document(file: UploadFile, db: DBSession, current_user: AdminUser):
     if len(content) > settings.MAX_FILE_SIZE:
         raise HTTPException(400, f"文件超过 {settings.MAX_FILE_SIZE // 1048576}MB 限制")
 
-    # 解析器按路径读文件：先落临时文件，用完即删
+    # 任务在worker进程按路径读文件：落临时盘（任务结束自行删除）
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
         tmp.write(content)
-        tmp_path = Path(tmp.name)
-    try:
-        text, method = svc.read_document_text(tmp_path)
-        if len(text.strip()) < MIN_DOC_TEXT_CHARS:
-            raise HTTPException(422, "未解析出有效文本（扫描件请确认清晰度，或改用文字版文档）")
-        if len(text) > svc.MAX_TEXT_CHARS:
-            raise HTTPException(
-                400, f"文档文本超长（{len(text)}字符，上限{svc.MAX_TEXT_CHARS}）"
-            )
+        upload_path = str(tmp.name)
+    task = extract_document_task.delay(upload_path, file.filename or "document", current_user.id)
+    logger.info("制度文档抽取任务已派发: task=%s file=%s user=%s", task.id, file.filename, current_user.id)
+    return ExtractionSubmitResponse(task_id=task.id, filename=file.filename or "document")
 
-        existing_codes, category_map = svc.load_import_context(db)
-        try:
-            drafts = svc.extract_rules_from_text(text, sorted(category_map))
-        except svc.LLMExtractionError as e:
-            raise HTTPException(502, f"规则抽取失败，请重试: {e}")
 
-        sections = svc.split_sections(text, fallback_title=file.filename or "正文")
-        rules = svc.annotate_draft_rows(drafts.rules, existing_codes, category_map)
-        return ExtractionDraftResponse(
-            filename=file.filename or "document",
-            source=file.filename or "公司财务制度",
-            sections=[SectionOut(**s) for s in sections],
-            rules=rules,
-            stats={
-                "text_chars": len(text),
-                "method": method,
-                "sections": len(sections),
-                "rules": len(rules),
-            },
+@router.get("/document/extract/{task_id}", response_model=ExtractionStatusResponse)
+def extraction_status(task_id: str, current_user: AdminUser):
+    """轮询抽取任务状态：SUCCESS携带完整草稿（章节+规则），FAILURE携带错误信息"""
+    res = celery_app.AsyncResult(task_id)
+    if res.state == "SUCCESS":
+        return ExtractionStatusResponse(
+            state="SUCCESS", draft=ExtractionDraftResponse.model_validate(res.result)
         )
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    if res.state == "FAILURE":
+        return ExtractionStatusResponse(state="FAILURE", error=str(res.result))
+    return ExtractionStatusResponse(state=res.state)
 
 
 @router.post("/document/confirm", response_model=ImportResultResponse)
@@ -144,23 +141,28 @@ def confirm_document(
         if errs
     ]
     if errors:
-        return _row_errors_response(errors)
+        return _row_errors_response(errors, "文档确认")
 
     items = [p for p in parsed if p is not None]
     try:
         rules = svc.write_rules(db, items, category_map)
     except svc.ImportValidationError as e:
-        return _row_errors_response(e.errors)
+        return _row_errors_response(e.errors, "文档确认·写入冲突")
 
-    try:
-        added, cleared = knowledge_base.import_policy_document(
-            [s.model_dump() for s in payload.sections],
-            payload.source,
-            replace=payload.mode == "replace",
-        )
-    except Exception as e:
-        logger.error(f"制度原文入库知识库失败（规则已入库，可重新导入文档补齐知识库）: {e}")
+    if settings.RAG_PROVIDER == "off":
+        # RAG停用：规则已入MySQL（主数据），跳过向量库写入（不调嵌入接口不碰Milvus）
+        logger.info("RAG未启用（RAG_PROVIDER=off），制度原文未入向量库")
         added, cleared = 0, False
+    else:
+        try:
+            added, cleared = knowledge_base.import_policy_document(
+                [s.model_dump() for s in payload.sections],
+                payload.source,
+                replace=payload.mode == "replace",
+            )
+        except Exception as e:
+            logger.exception("制度原文入库知识库失败（规则已入库，可重新导入文档补齐知识库）: %s", e)
+            added, cleared = 0, False
 
     return ImportResultResponse(
         imported=len(rules),

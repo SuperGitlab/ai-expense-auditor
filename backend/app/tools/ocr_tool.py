@@ -42,7 +42,7 @@ def read_invoice_ocr(source: str | None, declared_no: str | None = None,
             )
         return _extract_file(Path(source), declared_no, declared_amount)
     except Exception as e:
-        logger.warning(f"单据结构化提取失败 [{source}]: {e}")
+        logger.warning("单据结构化提取失败 [%s]: %s", source, e)
         return None
 
 
@@ -68,7 +68,7 @@ def _read_url_ocr(url: str, declared_no: str | None,
                   declared_amount: str | float | None) -> OCRResult | None:
     ext = Path(urlparse(url).path).suffix.lower()
     if ext in TEXT_EXTENSIONS:
-        return _result_from_text(_download_text(url), declared_no, declared_amount)
+        return _result_from_text(_download_text(url), declared_no, declared_amount, url)
     if ext not in IMAGE_EXTENSIONS and ext != ".docx":
         return None
     # 图片/PDF/docx：下载到临时文件走统一分派
@@ -85,14 +85,14 @@ def _read_url_ocr(url: str, declared_no: str | None,
 def _extract_file(p: Path, declared_no: str | None,
                   declared_amount: str | float | None) -> OCRResult | None:
     if not p.exists():
-        logger.warning(f"单据文件不存在: {p}")
+        logger.warning("单据文件不存在: %s", p)
         return None
     ext = p.suffix.lower()
     if ext in TEXT_EXTENSIONS:
         return _result_from_text(p.read_text(encoding="utf-8", errors="ignore"),
-                                 declared_no, declared_amount)
+                                 declared_no, declared_amount, p.name)
     if ext == ".docx":
-        return _result_from_text(_read_docx(p), declared_no, declared_amount)
+        return _result_from_text(_read_docx(p), declared_no, declared_amount, p.name)
     if ext in IMAGE_EXTENSIONS:
         # 函数内import：每次调用取模块属性，测试monkeypatch pipeline.extract_invoice 才能生效
         from app.ocr.pipeline import extract_invoice
@@ -107,9 +107,10 @@ def _read_docx(p: Path) -> str:
 
 
 def _result_from_text(text: str, declared_no: str | None,
-                      declared_amount: str | float | None) -> OCRResult:
+                      declared_amount: str | float | None, label: str = "") -> OCRResult:
     """文本直读（txt/docx）：跳过OCR层，直接KIE抽取+业务校验"""
     fields = kie.extract_fields(text)
+    logger.info("发票识别路由 [%s]: method=text, 字段=%s", label, list(fields.keys()) or "无")
     return OCRResult(
         method="text",
         raw_text=text,

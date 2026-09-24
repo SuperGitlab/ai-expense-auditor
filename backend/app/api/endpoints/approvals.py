@@ -19,6 +19,12 @@ def list_pending(db: DBSession, current_user: CurrentUser):
     return approval_service.list_pending(db, current_user)
 
 
+@router.get("/running", response_model=list[PendingExpenseItem])
+def list_running(db: DBSession, current_user: CurrentUser):
+    """AI执行中列表（SUBMITTED；manager限本部门，finance/admin全部）"""
+    return approval_service.list_running(db, current_user)
+
+
 @router.get("/{expense_id}/history", response_model=ApprovalListResponse)
 def get_history(expense_id: int, db: DBSession, current_user: CurrentUser):
     """报销单审批历史（含AI审核记录，需有读取权限）"""

@@ -62,9 +62,3 @@ def delete_rule(rule_id: int, db: DBSession, current_user: AdminUser):
         raise HTTPException(status_code=404, detail=f"规则 {rule_id} 不存在")
     db.delete(rule)
     db.commit()
-
-
-def _require_admin(user: User) -> None:
-    """管理员校验"""
-    if user is None or user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="需要管理员权限")

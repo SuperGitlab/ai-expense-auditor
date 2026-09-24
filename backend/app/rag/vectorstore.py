@@ -5,7 +5,7 @@
 注意：
 - Milvus是独立服务（standalone部署，地址由MILVUS_URI配置），不再依赖本地目录——
   顺带消除了旧版backend/worker两进程共享嵌入式sqlite目录的并发写隐患
-- 集合schema：id主键 + text原文 + vector向量（dim与GLM embedding一致），
+- 集合schema：id主键 + text原文 + vector向量（dim=EMBEDDING_DIMENSIONS，与Qwen3-Embedding一致），
   其余metadata走动态字段（enable_dynamic_field），无需逐个声明
 - 分数语义换算：Milvus COSINE分数越大越相似，本模块统一换算成
   distance = 1 - score（越小越相似），保持对上层（retriever/agent）的既有契约
@@ -16,7 +16,7 @@ from typing import Optional  # 类型标注：Optional[X]=X或None
 from pymilvus import DataType, MilvusClient  # Milvus官方SDK（MilvusClient=新版统一入口）
 
 from app.config import settings  # 本项目配置（MILVUS_URI、EMBEDDING_DIMENSIONS）
-from app.rag.embeddings import get_embeddings  # embedding工厂：文本→1024维向量（调GLM接口）
+from app.rag.embeddings import get_embeddings  # embedding工厂：文本→4096维向量（本机Ollama Qwen3-Embedding）
 
 # 以本模块名建logger，日志能定位到来源文件
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ def get_client() -> Optional[MilvusClient]:
         try:
             _client = MilvusClient(uri=settings.MILVUS_URI)  # 构造时即建连，失败抛异常
         except Exception as e:  # 连不上不炸应用（比如Milvus机器没开机）
-            logger.error(f"Milvus连接失败（{settings.MILVUS_URI}）: {e}")
+            logger.exception("Milvus连接失败（%s）: %s", settings.MILVUS_URI, e)
             return None  # 返回None，调用方据此降级（比如知识库不可用就跳过RAG检索）
     return _client  # 第二次起直接返回缓存的那一个客户端（全项目共用）
 
@@ -68,7 +68,7 @@ def get_collection(name: str, create: bool = True) -> Optional[str]:
             client.create_collection(collection_name=name, schema=schema, index_params=index_params)
         return name
     except Exception as e:
-        logger.error(f"获取集合 {name} 失败: {e}")
+        logger.exception("获取集合 %s 失败: %s", name, e)
         return None
 
 
@@ -80,7 +80,9 @@ class VectorStore:
 
     def __init__(self, collection_name: str):
         self.collection_name = collection_name  # 记住自己管哪个集合（表名）
-        self.embeddings = get_embeddings()  # 拿到embedding对象（内部封装GLM接口调用）
+        # embedding客户端懒加载（用时经get_embeddings()取lru_cache单例）：
+        # RAG停用（RAG_PROVIDER=off）时不构造——空EMBEDDING_API_KEY也能启动，
+        # 构造即炸会连坐workflow模块级单例的import（与Milvus客户端同款懒加载思路）
 
     def add_documents(self, texts: list[str], metadatas: list[dict], ids: list[str]) -> int:
         """
@@ -92,7 +94,7 @@ class VectorStore:
             return 0  # 库不可用 / 没有文本要入 → 0条
         try:
             # 先把所有文本批量算成向量（一次API调用传一批，比逐条调省网络开销）
-            vectors = self.embeddings.embed_documents(texts)
+            vectors = get_embeddings().embed_documents(texts)
             # 每行一个dict：三字段显式给值，metadata拍平进动态字段（不能叫id/text/vector）
             rows = [
                 {"id": rid, "vector": vec, "text": text, **(meta or {})}
@@ -101,7 +103,7 @@ class VectorStore:
             client.insert(collection_name=self.collection_name, data=rows)
             return len(texts)  # 返回入库条数
         except Exception as e:  # 任何一步失败（网络/embedding接口/Milvus写）都不炸应用
-            logger.error(f"[{self.collection_name}] 文档入库失败: {e}")
+            logger.exception("[%s] 文档入库失败: %s", self.collection_name, e)
             return 0
 
     def query(self, text: str, k: int = 3) -> list[dict]:
@@ -114,7 +116,7 @@ class VectorStore:
         if client is None or get_collection(self.collection_name) is None:
             return []  # 库不可用
         try:
-            vector = self.embeddings.embed_query(text)  # 查询句变向量（与入库同模型，向量空间才一致）
+            vector = get_embeddings().embed_query(text)  # 查询句变向量（与入库同模型，向量空间才一致）
             results = client.search(  # 向量近邻搜索（内部走HNSW索引，不是逐条遍历）
                 collection_name=self.collection_name,
                 data=[vector],  # 列表：支持一次查多句，这里只查一句
@@ -135,7 +137,7 @@ class VectorStore:
                 for hit in hits
             ]
         except Exception as e:
-            logger.error(f"[{self.collection_name}] 查询失败: {e}")
+            logger.exception("[%s] 查询失败: %s", self.collection_name, e)
             return []
 
     def count(self) -> int:
@@ -146,7 +148,8 @@ class VectorStore:
         try:
             stats = client.get_collection_stats(self.collection_name)
             return int(stats.get("row_count", 0))
-        except Exception:
+        except Exception as e:
+            logger.debug("集合统计查询失败（按不可用处理）: %s, err=%s", self.collection_name, e)
             return -1
 
     def reset(self) -> bool:
@@ -159,7 +162,8 @@ class VectorStore:
             # 下次get_collection/add时会按schema自动重建
             client.drop_collection(self.collection_name)
             return True
-        except Exception:
+        except Exception as e:
+            logger.warning("清空集合失败: %s, err=%s", self.collection_name, e)
             return False
 
 
@@ -172,5 +176,5 @@ def is_available() -> bool:
         client.list_collections()  # 发一次真实请求探活（不是只看连接对象存在）
         return True
     except Exception as e:
-        logger.error(f"Milvus探活失败: {e}")
+        logger.exception("Milvus探活失败: %s", e)
         return False

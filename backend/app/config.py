@@ -44,25 +44,42 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
-    # LLM配置(GLM)
-    GLM_API_KEY: str
-    # GLM官方OpenAI兼容API地址；必须显式指定，否则ChatOpenAI会静默指向api.openai.com导致401
-    GLM_API_BASE: str = "https://open.bigmodel.cn/api/paas/v4"
-    MODEL_NAME: str = "glm-5.1"  # 可配置使用的模型名称
-    EMBEDDING_MODEL_NAME: str = "embedding-3"  # 可配置使用的嵌入模型名称
-    TEMPERATURE: float = 0.3  # 审核场景需要稳定输出，温度不宜过高
-    MAX_TOKENS: int = 2048  # 可配置最大token数
+    # LLM配置（Kimi for Coding订阅，OpenAI兼容端点）
+    LLM_API_KEY: str
+    # 必须显式指定，否则ChatOpenAI会静默指向api.openai.com导致401。
+    # 注意sk-kimi-开头的密钥只属于Kimi for Coding订阅端点(/coding/v1)，
+    # 与api.moonshot.cn、api.kimi.com/v1通用API互不相认
+    LLM_API_BASE: str = "https://api.kimi.com/coding/v1"
+    MODEL_NAME: str = "k3"  # 可配置使用的模型名称（K3原生多模态，对话/图片理解同款）
+    # K3是思考型模型（思考token计入MAX_TOKENS），low/high/max；
+    # 审核流水线多Agent串行+solo worker单并发，low平衡时延
+    LLM_REASONING_EFFORT: str = "low"
+    TEMPERATURE: float = 0.3  # 预留：K3思考模型仅允许temperature=1，当前不传不生效
+    MAX_TOKENS: int = 8192  # 思考模型的推理token会挤占回复空间，2048会导致正文为空
+
+    # RAG向量检索配置
+    # milvus=启用两路检索+案例回填（需可达的MILVUS_URI+嵌入服务）
+    # off=停用（审核链路只用Kimi；RAG节点在画布保留但返回空）
+    RAG_PROVIDER: str = "milvus"
+
+    # RAG嵌入配置：本机Ollama跑Qwen3-Embedding（OpenAI兼容/v1/embeddings端点）
+    # key为占位值——Ollama不校验，但OpenAI SDK要求非空；换回云API时改base+key+模型名即可
+    EMBEDDING_API_KEY: str = ""
+    EMBEDDING_API_BASE: str = "http://localhost:11434/v1"
+    EMBEDDING_MODEL_NAME: str = "qwen3-embedding:8b"  # 可配置使用的嵌入模型名称
+    EMBEDDING_DIMENSIONS: int = 4096  # 嵌入向量维度（Qwen3-Embedding-8B默认4096，可32-4096）
+    LLM_TIMEOUT_SECONDS: int = 300  # 单次LLM调用超时：solo worker单并发，无界挂起会冻住整个审核队列
+    LLM_MAX_RETRIES: int = 1  # LLM调用失败重试次数（重试放大时延，保守取1）
 
     # OCR混合流水线配置
     OCR_PROVIDER: str = "hybrid"  # hybrid=混合流水线; off=保持占位行为
-    VLM_MODEL_NAME: str = "glm-4.1v-flash"  # OCR的VLM兜底模型
+    VLM_MODEL_NAME: str = "k3"  # OCR的VLM兜底模型（K3原生支持图片输入）
     OCR_MIN_CONFIDENCE: float = 0.85  # RapidOCR分支的路由阈值(平均置信度)
 
     # AI审核策略配置
     AGENT_REVIEW_ON_SUBMIT: bool = True  # 提交报销单时是否自动触发AI审核
     RISK_LOW_MAX: int = 40  # 风险分低于此值视为低风险（可自动通过）
     RISK_HIGH_MIN: int = 70  # 风险分高于此值视为高风险（强制人工审批）
-    EMBEDDING_DIMENSIONS: int = 1024  # embedding-3支持的向量维度(256/512/1024/2048)
 
     # 向量数据库配置（Milvus独立服务，地址指向已部署的standalone实例）
     MILVUS_URI: str = "http://localhost:19530"
